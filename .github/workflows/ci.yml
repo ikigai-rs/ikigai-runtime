@@ -1,0 +1,52 @@
+name: ci
+on:
+  push: { branches: [main] }
+  pull_request:
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}   # never cancel main
+
+jobs:
+  # The cargo gates (fmt · clippy · test · doc · msrv-from-manifest) live in the shared workflow
+  # (field guide 9g). `ikigai-runtime` is the one wasm-clean member, so `wasm-lib` is scoped to it
+  # with `wasm-packages` (the other members link wasmtime and are not wasm-clean). The
+  # `jail-fixtures` feature path is NOT covered here — it needs the wasm targets installed, which
+  # the shared workflow does not do — so it has its own job below.
+  ci:
+    uses: ikigai-rs/.github/.github/workflows/rust.yml@main
+    with:
+      wasm-lib: true
+      wasm-packages: ikigai-runtime
+
+  # The guest-fixture end-to-end tests (the ABI v1 session and the WASI p1 path), behind the
+  # `jail-fixtures` feature. Its own job because the fixtures are built for wasm32 by the build
+  # script, so the wasm targets must be installed (9c: a feature-gated path gets a job that
+  # enables it; unconditional, never path-filtered).
+  jail-fixtures:
+    name: jail-fixtures (wasm)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown, wasm32-wasip1
+          components: clippy
+      - uses: Swatinem/rust-cache@v2
+      - name: clippy (jail-fixtures)
+        run: cargo clippy -p ikigai-runtime-wasmtime --all-targets --features jail-fixtures -- -D warnings
+      - name: test (jail-fixtures)
+        run: cargo test -p ikigai-runtime-wasmtime --features jail-fixtures
+
+  # p3 tripwire (R-D17): p3 is built on nightly in a labeled, NON-BLOCKING job until Rust 1.100.0
+  # ships on 2026-11-12, after which p3 moves to the blocking stable jobs. R3a carries no p3 code
+  # yet (the component tier is R3b), so this is a build tripwire that nightly still compiles the
+  # workspace; it never gates a merge.
+  p3-nightly:
+    name: p3 nightly (non-blocking)
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@nightly
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo build --workspace

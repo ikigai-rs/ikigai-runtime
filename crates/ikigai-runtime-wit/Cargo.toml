@@ -1,0 +1,21 @@
+[package]
+name = "ikigai-runtime-wit"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+homepage.workspace = true
+description = "The ikigai:runtime@0.1.0 WIT package: the imported `kernel` interface (the five verbs on an IRI), the exported `endpoint` interface, and the `endpoint` (no WASI authority) and `app` worlds (R-D2)."
+keywords = ["ikigai", "wasm", "wit", "component-model", "webassembly"]
+categories = ["wasm"]
+# The WIT files are the deliverable; ship them in the package.
+include = ["src/**/*.rs", "wit/**/*.wit", "README.md", "../../LICENSE-*"]
+
+[dependencies]
+
+[dev-dependencies]
+# Pinned to the wasmparser the pinned wasmtime uses (both 0.261), so the lift and wasmtime read
+# one wasmparser (R-D14, R-D17). Dev-only: the crate ships the WIT; the test proves it parses.
+wit-parser = { workspace = true }

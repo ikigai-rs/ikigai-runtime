@@ -1,0 +1,19 @@
+[package]
+name = "ikigai-runtime-guest"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+homepage.workspace = true
+description = "The Rust guest SDK for ikigai modules. R3: the core-module (ikigai-module ABI v1) guest ABI — alloc/free/invoke and the synchronous host_call pump. The wit-bindgen component SDK (the `endpoint`/`app` worlds) lands in R3b."
+keywords = ["ikigai", "wasm", "guest", "abi", "webassembly"]
+categories = ["wasm", "api-bindings"]
+
+[dependencies]
+ikigai-runtime = { path = "../ikigai-runtime", version = "0.1.0" }
+postcard = { workspace = true, features = ["alloc"] }
+
+[dev-dependencies]
+postcard = { workspace = true, features = ["use-std"] }

@@ -1,0 +1,23 @@
+[package]
+name = "ikigai-runtime"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+homepage.workspace = true
+description = "The engine-neutral, wasm-clean core of the ikigai runtime: budget/capability plumbing, the grant-to-WASI plan, the CoreEngine trait, the ikigai-module ABI v1 session types, the WIT projection types, and the content-addressed loader/compiled-cache model."
+keywords = ["ikigai", "roc", "webassembly", "wasm", "capability"]
+categories = ["wasm", "api-bindings"]
+
+[dependencies]
+ikigai-core = { workspace = true }
+serde = { workspace = true }
+# `alloc` so the session types round-trip under postcard on both host (std) and guest
+# (wasm32-unknown-unknown) builds without pulling `std` into this wasm-clean crate.
+postcard = { workspace = true, features = ["alloc"] }
+blake3 = { workspace = true }
+
+[dev-dependencies]
+postcard = { workspace = true, features = ["use-std"] }

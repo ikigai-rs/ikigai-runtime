@@ -1,0 +1,22 @@
+# A core-module (ikigai-module ABI v1) guest fixture, built for wasm32-unknown-unknown by
+# `ikigai-runtime-wasmtime`'s build.rs under the `jail-fixtures` feature. Its OWN workspace (an
+# empty `[workspace]` table) so the native workspace never tries to build it.
+[package]
+name = "jail-guest"
+version = "0.0.0"
+edition = "2021"
+publish = false
+
+[workspace]
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+ikigai-runtime = { path = "../../crates/ikigai-runtime" }
+ikigai-runtime-guest = { path = "../../crates/ikigai-runtime-guest" }
+postcard = { version = "1", features = ["alloc"] }
+
+[profile.release]
+opt-level = "s"
+lto = true
