@@ -1,0 +1,7 @@
+/target
+**/*.rs.bk
+# Cargo.lock IS committed: the workspace pins wasmtime to one major on purpose (R-D17), so the
+# monthly bump is a reviewable `lock-diff` PR, and the shell binary (R-D8) deploys this graph.
+# The guest fixtures are separate wasm32-only workspaces built in CI; their locks are build
+# artifacts (a fresh resolve is fine for a test fixture), so they are not committed.
+/fixtures/*/Cargo.lock

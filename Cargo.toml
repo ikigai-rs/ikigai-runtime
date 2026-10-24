@@ -1,0 +1,52 @@
+# The ikigai runtime workspace (R-D16). One PUBLIC workspace; `ikigai-runtime` is the
+# engine-neutral, wasm-clean core, `ikigai-runtime-wasmtime` the wasmtime implementation of
+# the core-module tier, `ikigai-runtime-wit` the `ikigai:runtime` WIT package, and
+# `ikigai-runtime-guest` the Rust guest SDK. The guest FIXTURES under `fixtures/` target
+# wasm32 only and are built by `ikigai-runtime-wasmtime`'s build.rs (feature `jail-fixtures`),
+# so they are EXCLUDED from the native workspace.
+[workspace]
+resolver = "2"
+members = ["crates/*"]
+exclude = ["fixtures"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+# wasmtime 50 (and wasmtime-wasi 50) declare rust-version 1.97.0; that is the true floor, so
+# the shared `msrv-from-manifest` CI job checks exactly it (R-D17).
+rust-version = "1.97"
+license = "MIT OR Apache-2.0"
+authors = ["Brian Sletten <brian.sletten@gmail.com>"]
+repository = "https://github.com/ikigai-rs/ikigai-runtime"
+homepage = "https://github.com/ikigai-rs/ikigai-runtime"
+
+[workspace.dependencies]
+# The published kernel, consumed from crates.io — the SAME version the hosts use, so a host
+# links exactly one `ikigai-core`. DEFAULT features only (no `declare`), which is just
+# `async-trait`, `blake3` and `futures-util`: wasm-clean, no `getrandom`. The runtime speaks
+# core's `Representation`, `Error` (incl. `OverBudget`, since 0.1.108) and `Capability`.
+# ⚠ `^0.1.111` is also a CEILING (`<0.2.0`) under Cargo's 0.x caret rules (field guide rule 5).
+ikigai-core = "0.1.111"
+serde = { version = "1", features = ["derive"] }
+# The J2 session payload is postcard (R-D6). `use-std` on the host; the guest uses the same
+# crate with `alloc` (see `ikigai-runtime-guest`).
+postcard = { version = "1", default-features = false }
+anyhow = "1"
+# Content-addressing for the loader's artifact atom (R-D7). blake3 is already in the graph
+# through ikigai-core and is wasm-clean (pure-Rust fallback on wasm32).
+blake3 = "1"
+
+# wasmtime is PINNED TO ONE MAJOR and bumped monthly ON PURPOSE (R-D17). wasmtime ships a
+# breaking major about the 20th of each month; `^50.0.0` is a caret, so it is a CEILING below
+# 51 (field guide rule 5) — the bump is a recipe-driven PR with `lock-diff` in its description
+# and the fixture suite as its gate. wasmtime 50 makes `Config::async_support` a no-op, so the
+# core-module tier never calls it and runs fully synchronously.
+wasmtime = "50.0.0"
+# wasmtime-wasi carries the WASI p1 path (`p1` feature) the core-module tier's third convention
+# uses; it moves in lockstep with wasmtime's major. `default-features = false` here (not on the
+# member) so the member's `features = ["p1"]` takes only what the core-module tier needs — the
+# component-model WASI (p2/p3) arrives with the component tier in R3b.
+wasmtime-wasi = { version = "50.0.0", default-features = false }
+# wit-parser is pinned to the version the pinned wasmtime uses (both 0.261 → wasmparser 0.261),
+# so the WIT lift and wasmtime read one wasmparser (R-D14, R-D17).
+wit-parser = "0.261.0"

@@ -1,0 +1,16 @@
+# A WASI p1 command-module fixture (R-D6 convention 3), built for wasm32-wasip1 by
+# `ikigai-runtime-wasmtime`'s build.rs under the `jail-fixtures` feature. Its own workspace.
+[package]
+name = "p1-cmd"
+version = "0.0.0"
+edition = "2021"
+publish = false
+
+[workspace]
+
+[[bin]]
+name = "p1cmd"
+path = "src/main.rs"
+
+[profile.release]
+opt-level = "s"

@@ -1,0 +1,31 @@
+[package]
+name = "ikigai-runtime-wasmtime"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+homepage.workspace = true
+description = "The wasmtime implementation of the ikigai runtime's core-module tier (R-D1, R-D6): three calling conventions (numeric signatures, the ikigai-module ABI v1, and WASI p1 command modules), a fresh Store per session, fuel/epoch/memory budgets from Limits, host_call clamped to the session's capability, and the R-D10 error mapping."
+keywords = ["ikigai", "wasm", "wasmtime", "jail", "webassembly"]
+categories = ["wasm"]
+
+[dependencies]
+ikigai-runtime = { path = "../ikigai-runtime", version = "0.1.0" }
+ikigai-core = { workspace = true }
+wasmtime = { workspace = true }
+# The WASI p1 path for the third calling convention (command modules). `p1` is the only feature
+# this tier needs; the component-model (p2/p3) WASI arrives with the component tier in R3b.
+wasmtime-wasi = { workspace = true, features = ["p1"] }
+postcard = { workspace = true, features = ["use-std"] }
+
+[features]
+# The guest-fixture end-to-end tests (`tests/jail.rs`, `tests/wasi_p1.rs`). The build script
+# compiles the wasm32 guest fixtures only under this feature; the dedicated `jail-fixtures` CI
+# job enables it (9c: a feature-gated target gets a job that enables it). The default build
+# (and the numeric always-on test) needs no wasm toolchain.
+jail-fixtures = []
+
+[dev-dependencies]
+postcard = { workspace = true, features = ["use-std"] }
