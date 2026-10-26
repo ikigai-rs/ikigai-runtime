@@ -12,7 +12,7 @@ keywords = ["ikigai", "wasm", "wasmtime", "jail", "webassembly"]
 categories = ["wasm"]
 
 [dependencies]
-ikigai-runtime = { path = "../ikigai-runtime", version = "0.1.0" }
+ikigai-runtime = { path = "../ikigai-runtime", version = "0.2.0" }
 ikigai-core = { workspace = true }
 wasmtime = { workspace = true }
 # The WASI p1 path for the third calling convention (command modules). `p1` is the only feature
