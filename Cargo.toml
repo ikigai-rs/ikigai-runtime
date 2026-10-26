@@ -10,7 +10,7 @@ members = ["crates/*"]
 exclude = ["fixtures"]
 
 [workspace.package]
-version = "0.1.0"
+version = "0.2.0"
 edition = "2021"
 # wasmtime 50 (and wasmtime-wasi 50) declare rust-version 1.97.0; that is the true floor, so
 # the shared `msrv-from-manifest` CI job checks exactly it (R-D17).
@@ -23,10 +23,11 @@ homepage = "https://github.com/ikigai-rs/ikigai-runtime"
 [workspace.dependencies]
 # The published kernel, consumed from crates.io — the SAME version the hosts use, so a host
 # links exactly one `ikigai-core`. DEFAULT features only (no `declare`), which is just
-# `async-trait`, `blake3` and `futures-util`: wasm-clean, no `getrandom`. The runtime speaks
+# wasm-clean, with no `getrandom`. The runtime speaks
 # core's `Representation`, `Error` (incl. `OverBudget`, since 0.1.108) and `Capability`.
-# ⚠ `^0.1.111` is also a CEILING (`<0.2.0`) under Cargo's 0.x caret rules (field guide rule 5).
-ikigai-core = "0.1.111"
+# 0.2.0 is the streams release (ledger #2261). The old 0.1 pin meant <0.2.0
+# under Cargo's 0.x caret rules. Core types are part of the runtime's public API.
+ikigai-core = "0.2.0"
 serde = { version = "1", features = ["derive"] }
 # The J2 session payload is postcard (R-D6). `use-std` on the host; the guest uses the same
 # crate with `alloc` (see `ikigai-runtime-guest`).
