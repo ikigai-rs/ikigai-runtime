@@ -979,6 +979,7 @@ name = "ikigai-runtime"
 version = "0.2.0"
 dependencies = [
  "blake3",
+ "futures",
  "ikigai-core",
  "ikigai-module-abi",
 ]

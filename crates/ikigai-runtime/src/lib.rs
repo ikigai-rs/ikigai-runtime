@@ -33,7 +33,9 @@ pub use engine::{
 };
 pub use grants::{wasi_plan, ClockAccess, FsAccess, Grants, NetAccess, RandomAccess, WasiPlan};
 pub use limits::{Deadline, Limits, Provenance};
-pub use loader::{Artifact, ArtifactDigest, CompiledKey, EngineCompatHash, LoadError};
+pub use loader::{
+    artifact_iri, load_artifact, Artifact, ArtifactDigest, CompiledKey, EngineCompatHash, LoadError,
+};
 pub use projection::{ProjectedEndpoint, Verb};
 pub use session::{pack, unpack};
 pub use space::LoadedModule;

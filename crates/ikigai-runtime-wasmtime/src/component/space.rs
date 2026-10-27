@@ -37,15 +37,8 @@ impl ComponentSpace {
         served: Vec<Description>,
         skipped: Vec<Skipped>,
     ) -> Result<Self> {
+        // `mount` checked the name is one segment.
         let name = app.app();
-        if name.is_empty() || name.contains(':') || encode_name(name) != name {
-            return Err(Error::InvalidArgument {
-                name: "app".into(),
-                detail: format!(
-                    "`{name}` is not one name segment; a mount answers under urn:runtime:app:{{app}}:"
-                ),
-            });
-        }
         let mut served_by_urn: BTreeMap<String, Description> = BTreeMap::new();
         for description in served {
             let urn = format!("urn:runtime:app:{name}:{}", encode_name(&description.id));

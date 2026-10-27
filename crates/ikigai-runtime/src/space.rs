@@ -3,9 +3,10 @@
 //! "The runtime mints; core arranges" (R-D7's second design point): the runtime loads a module,
 //! projects its exports and would register them in core's `Registry`, after which a core
 //! declaration arranges them — which respects core's rule that a declaration "arranges; it never
-//! mints", with no core change. R3 types that seam as [`LoadedModule`]: the mount name, the
-//! calling convention detected from its exports, and the projected endpoints. Wiring it into
-//! core's `Space`/`Registry` is R3b (the component tier), so this stays a typed description here.
+//! mints", with no core change. [`LoadedModule`] is that seam's description: the mount name, the
+//! calling convention detected from its exports, and the projected endpoints. The engine crate
+//! does the minting: `ikigai-runtime-wasmtime`'s `ComponentSpace` (components) and its
+//! `JailTransport` under ikigai-module's `ModuleSpace` (core modules) are core `Space`s.
 
 use crate::projection::ProjectedEndpoint;
 
@@ -44,8 +45,9 @@ impl LoadedModule {
 
     /// The projected URNs this module answers under its own `urn:runtime:app:{app}:` prefix. A
     /// loaded module can never answer for `urn:runtime:artifact:*`, `urn:runtime:bundle:*`,
-    /// `urn:kernel:*` or `urn:cap:*` — that sealing is core's `Kernel::check_sealing`, applied
-    /// where these are registered (R3b).
+    /// `urn:kernel:*` or `urn:cap:*`: a mounted space answers only names under its own prefix,
+    /// so core's `Kernel::check_sealing` passes for any arrangement that seals those
+    /// (`ikigai-runtime-wasmtime`'s `component_wat` test checks it).
     pub fn urns(&self) -> Vec<String> {
         self.endpoints.iter().map(ProjectedEndpoint::urn).collect()
     }

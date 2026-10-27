@@ -3,7 +3,7 @@
 //! A guest declares its exports with [`ikigai_module!`](crate::ikigai_module), passing a dispatch
 //! function `fn(AbiModuleCall) -> Reply`. The SDK handles the `u64` packing, the guest allocator
 //! the host writes through, and the synchronous `host_call` pump. The payload is ikigai-module's
-//! session, built from the wire-only mirrors in `ikigai-module-abi` (re-exported as [`abi`]): a
+//! session, built from the wire-only mirrors in `ikigai-module-abi` (re-exported as [`abi`](crate::abi)): a
 //! guest links the session and nothing of ikigai-core.
 //!
 //! ## Why a guest replies with [`Reply`], not `AbiModuleReply`
@@ -13,7 +13,7 @@
 //! The type says so at compile time. Each variant is encoded at **its `AbiModuleReply` index**
 //! through postcard's own serializer, so the bytes are identical (`tests` below compare every
 //! variant against the derived encoding) and nothing of the wire is re-implemented. `HostCall`
-//! is the SDK's own business ([`host_call`]).
+//! is the SDK's own business (`host_call`, wasm32 only).
 //!
 //! It is NOT a size lever, measured at R3b (stripped, release, opt-level `s`, a guest that
 //! makes a host call, echoes an argument and answers `Describe`): the derived encoder 47,138
@@ -143,7 +143,7 @@ pub fn alloc(len: usize) -> *mut u8 {
     ptr
 }
 
-/// Free a buffer allocated by [`alloc`] (or handed back by the host as a `host_call` result).
+/// Free a buffer allocated by [`alloc()`] (or handed back by the host as a `host_call` result).
 ///
 /// # Safety
 /// `ptr`/`len` must name a buffer this allocator produced and not yet freed.
@@ -198,7 +198,7 @@ pub fn process(call_bytes: &[u8], dispatch: fn(AbiModuleCall) -> Reply) -> Vec<u
 /// the reply back as the packed `u64`.
 ///
 /// # Safety
-/// `ptr`/`len` must name a buffer the host wrote with [`alloc`].
+/// `ptr`/`len` must name a buffer the host wrote with [`alloc()`].
 pub unsafe fn run_invoke(ptr: u32, len: u32, dispatch: fn(AbiModuleCall) -> Reply) -> u64 {
     let call_bytes = take_bytes(ptr as *mut u8, len as usize);
     leak_bytes(process(&call_bytes, dispatch))
@@ -253,7 +253,7 @@ pub fn answer_from(answer: &[u8]) -> Result<AbiRepresentation, AbiModuleError> {
     }
 }
 
-/// `Source` a resource through the host (see [`host_call`]).
+/// `Source` a resource through the host (see `host_call`).
 #[cfg(target_arch = "wasm32")]
 pub fn host_source(
     iri: &str,
@@ -262,7 +262,7 @@ pub fn host_source(
     host_call(&AbiRequest::new(AbiVerb::Source, iri), capability)
 }
 
-/// The request a `Source` of `iri` makes (for a native test of what [`host_call`] would send).
+/// The request a `Source` of `iri` makes (for a native test of what `host_call` would send).
 pub fn source_request(iri: &str) -> AbiRequest {
     AbiRequest::new(AbiVerb::Source, iri)
 }

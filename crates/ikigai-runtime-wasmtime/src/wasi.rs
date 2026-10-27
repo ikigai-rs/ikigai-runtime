@@ -4,7 +4,7 @@
 //! clock and a **seeded** RNG (seeded from the artifact and input digests), captured and bounded
 //! stdio, no args, no environment, no preopens, no sockets and no DNS. Each grant then unlocks
 //! exactly its row of the table: a preopen per `fs` grant, an env value per `env` grant (the VALUE
-//! from the host, never `inherit_env`), the kernel's injected [`Clock`](ikigai_core::Clock) for
+//! from the host, never `inherit_env`), the kernel's injected [`Clock`] for
 //! `clock:wall`, the host CSPRNG for `random:secure`, and an exact socket rule (plus the implicit
 //! unspecified bind every connect needs) per IP-literal `net` grant.
 

@@ -169,13 +169,26 @@ impl ComponentEngine {
     /// precompiled form is never deserialized from anywhere but this cache (R-D7).
     pub fn compile(&self, artifact: &Artifact) -> Result<Component, EngineError> {
         let key = artifact.compiled_key(&self.compat_hash());
-        let mut cache = self.inner.compiled.lock().expect("the compiled cache");
-        if let Some(component) = cache.get(&key) {
+        if let Some(component) = self
+            .inner
+            .compiled
+            .lock()
+            .expect("the compiled cache")
+            .get(&key)
+        {
             return Ok(component.clone());
         }
+        // Compiled outside the lock, so one large compile does not stall every other mount; two
+        // racing compiles of one digest produce the same form, and the second insert is a no-op
+        // in effect.
         let component = Component::new(&self.inner.engine, artifact.bytes())
             .map_err(|e| EngineError::Compile(format!("{e:#}")))?;
-        cache.insert(key, component.clone());
+        self.inner
+            .compiled
+            .lock()
+            .expect("the compiled cache")
+            .entry(key)
+            .or_insert_with(|| component.clone());
         Ok(component)
     }
 
@@ -197,6 +210,15 @@ impl ComponentEngine {
         artifact: &Artifact,
         config: AppConfig,
     ) -> Result<ComponentSpace, Error> {
+        let name = config.app.as_str();
+        if name.is_empty() || name.contains(':') || ikigai_core::encode_name(name) != name {
+            return Err(Error::InvalidArgument {
+                name: "app".into(),
+                detail: format!(
+                    "`{name}` is not one name segment; a mount answers under urn:runtime:app:{{app}}:"
+                ),
+            });
+        }
         let component = self.compile(artifact).map_err(|e| Error::InvalidArgument {
             name: "artifact".into(),
             detail: e.to_string(),

@@ -6,9 +6,9 @@
 //! default (a call as a read); a function that mutates is declared a [`Verb::Sink`] in the bundle
 //! or declaration, and as a Sink must declare `content` (the pipeline rule conformance enforces).
 //!
-//! The full WIT value → XSD / JSON type map (R-D4's table) belongs to the component tier (R3b);
-//! R3 establishes the naming and verb only, which the core-module tier already uses (a numeric
-//! export projects under the same scheme).
+//! The WIT value → XSD / JSON type map (R-D4's table) lives with the engine that reads WIT
+//! values (`ikigai-runtime-wasmtime`'s component tier); this crate holds the naming and the verb,
+//! which every tier shares.
 
 /// The default verb of a projected export (R-D4, open question 5 = (a)).
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]

@@ -1,5 +1,5 @@
-// The `ikigai:runtime` WIT package (R-D2). Established now even though the component tier is
-// R3b: a guest and a host can be built against a stable contract from the start.
+// The `ikigai:runtime` WIT package (R-D2): the contract a component guest and the runtime's
+// component tier (ikigai-runtime-wasmtime) are both built against.
 //
 // `kernel` is imported by a guest: the five verbs on an IRI, named arguments as a list, and a
 // `representation` record or an `error` variant that mirrors ikigai-core's error classes. The
@@ -11,7 +11,7 @@
 //
 // World `endpoint` receives NO WASI AUTHORITY (R-D2, open question 7): a guest's WASI imports
 // are satisfied by an empty, deterministic context. World `app` adds the WASI a grant unlocks
-// (R-D3), linked per call in R3b.
+// (R-D3), built per call from the caller's grants clamped by the app's ceiling.
 package ikigai:runtime@0.1.0;
 
 interface kernel {
@@ -76,8 +76,7 @@ world endpoint {
   export endpoint-api;
 }
 
-/// The `endpoint` world plus the WASI a grant unlocks (R-D3); the WASI imports are linked per
-/// call in R3b.
+/// The `endpoint` world plus the WASI a grant unlocks (R-D3), built per call from the grants.
 world app {
   import kernel;
   export endpoint-api;

@@ -517,3 +517,51 @@ pub(crate) fn representation_to_val(ty: &Type, repr: &Representation) -> Result<
         other => val_from_bytes(other, &repr.bytes, "result"),
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn json_follows_the_shape_val_already_has() {
+        let record = Val::Record(vec![
+            ("min".into(), Val::Float64(1.0)),
+            ("tags".into(), Val::Flags(vec!["a".into()])),
+        ]);
+        assert_eq!(val_to_json(&record), json!({"min": 1.0, "tags": ["a"]}));
+        assert_eq!(
+            val_to_json(&Val::Variant("circle".into(), Some(Box::new(Val::U32(3))))),
+            json!({"circle": 3})
+        );
+        assert_eq!(
+            val_to_json(&Val::Variant("none".into(), None)),
+            json!("none")
+        );
+        assert_eq!(val_to_json(&Val::Option(None)), Json::Null);
+        assert_eq!(
+            val_to_json(&Val::Result(Err(Some(Box::new(Val::String("no".into())))))),
+            json!({"err": "no"})
+        );
+        assert_eq!(
+            val_to_json(&Val::Map(vec![(Val::String("k".into()), Val::S8(-1))])),
+            json!([["k", -1]])
+        );
+        // A float JSON cannot hold travels as its text, never as a silent null.
+        assert_eq!(val_to_json(&Val::Float64(f64::NAN)), json!("NaN"));
+    }
+
+    #[test]
+    fn a_bound_imports_arguments_are_their_text_or_bytes() {
+        assert_eq!(val_to_arg_bytes(&Val::S32(-7)), b"-7");
+        assert_eq!(val_to_arg_bytes(&Val::String("hi".into())), b"hi");
+        assert_eq!(
+            val_to_arg_bytes(&Val::List(vec![Val::U8(1), Val::U8(2)])),
+            vec![1, 2]
+        );
+        assert_eq!(val_to_arg_bytes(&Val::Enum("red".into())), b"red");
+        assert_eq!(
+            val_to_arg_bytes(&Val::Record(vec![("x".into(), Val::U8(1))])),
+            br#"{"x":1}"#
+        );
+    }
+}

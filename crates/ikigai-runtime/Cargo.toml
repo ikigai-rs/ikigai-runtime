@@ -17,3 +17,7 @@ ikigai-core = { workspace = true }
 # `u64` packing and export names beside them. `no_std + alloc`, so this stays wasm-clean.
 ikigai-module-abi = { workspace = true }
 blake3 = { workspace = true }
+
+[dev-dependencies]
+# `block_on` for the loader's async test; the crate itself runs on no executor.
+futures = { workspace = true }
