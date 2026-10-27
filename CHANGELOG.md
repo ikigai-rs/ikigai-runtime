@@ -23,6 +23,18 @@
   absolute or has an empty, `.` or `..` segment is refused, naming the grant, never normalized
   (`grants::check_fs_path`). Under a root ceiling such a grant used to preopen a directory
   outside the jail root. `apply_plan` checks again.
+- **An `fs` grant names a HOST path, exactly as in ikigai-fs** (breaking): one grant string, one
+  directory, whether the guest reaches it through WASI or through `urn:file:*`.
+  `urn:cap:fs:read:/srv/jail/data` with the jail root `/srv/jail` preopens `/srv/jail/data` and
+  the guest sees `/data` (`grants::guest_path_in_jail`). A grant that is not the jail root or
+  under it, `/` included, is refused naming the grant and the jail root; it used to be served
+  from `<jail root>/<path>`. `FsPreopen::guest_path` is now `host_path`.
+- A jail root of `/` (or one that resolves to it) is refused when the component is mounted
+  (`wasi::check_jail_root_path`, `grants::check_jail_root`).
+- An `fs` exclusion at or under a preopened path refuses the plan, naming both scopes
+  (`urn:cap:fs:read:/ws` + `urn:cap:fs:read:-/ws/secret`): a WASI preopen cannot exclude a path
+  inside it, and the plan used to drop every exclusion and preopen all of `/ws`. An exclusion
+  under no preopen changes nothing.
 
 ## 0.2.0
 

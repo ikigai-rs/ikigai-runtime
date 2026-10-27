@@ -10,7 +10,7 @@
 
 use std::collections::BTreeMap;
 use std::net::SocketAddr;
-use std::path::PathBuf;
+use std::path::{Component, Path, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -124,9 +124,12 @@ fn derive(seed: &[u8; 32], label: &[u8]) -> [u8; 32] {
 /// and the kernel's clock. A grant decides WHETHER; this says WHAT.
 #[derive(Clone)]
 pub struct AppHost {
-    /// The jail root: a granted `fs` path `<p>` is preopened from `<fs_root>/<p>` and appears to
-    /// the guest as `<p>`. `None` refuses every `fs` grant at instantiation (a grant the host
-    /// cannot serve is an error, never silently dropped).
+    /// The jail root. An `fs` grant names a HOST path, as in ikigai-fs; it is preopened only
+    /// when it is this root or under it, and appears to the guest as its part under the root
+    /// (`<fs_root>/data` is `/data` in the guest). A grant outside the root is refused, naming
+    /// both. The root must be absolute with plain segments and must not be `/`
+    /// ([`check_jail_root_path`]; a mount refuses it). `None` refuses every `fs` grant at
+    /// instantiation (a grant the host cannot serve is an error, never silently dropped).
     pub fs_root: Option<PathBuf>,
     /// Environment values for granted names. A granted name the host has no value for is set to
     /// nothing (the guest sees it absent), never read from the process.
@@ -145,8 +148,78 @@ impl Default for AppHost {
     }
 }
 
+/// The jail root as plain segments (`/srv/jail`, from `/srv/jail/` or `/srv/./jail`), checked by
+/// [`check_jail_root`](ikigai_runtime::grants::check_jail_root): absolute, no `..`, valid UTF-8,
+/// and not `/`. A mount refuses a root this refuses, so a misconfigured host fails when it is
+/// configured, not on its first call; [`apply_plan`] checks again, since the field is public.
+pub fn check_jail_root_path(root: &Path) -> Result<String, String> {
+    let shown = root.display();
+    let mut spelled = String::new();
+    let mut absolute = false;
+    for component in root.components() {
+        match component {
+            Component::RootDir => absolute = true,
+            Component::CurDir => {}
+            Component::Normal(name) => {
+                let name = name
+                    .to_str()
+                    .ok_or_else(|| format!("the jail root `{shown}` is not valid UTF-8"))?;
+                spelled.push('/');
+                spelled.push_str(name);
+            }
+            Component::ParentDir | Component::Prefix(_) => {
+                return Err(format!(
+                    "the jail root `{shown}` must be an absolute path with plain segments"
+                ))
+            }
+        }
+    }
+    if !absolute {
+        return Err(format!("the jail root `{shown}` is not absolute"));
+    }
+    if spelled.is_empty() {
+        spelled.push('/');
+    }
+    ikigai_runtime::grants::check_jail_root(&spelled)
+        .map_err(|reason| format!("`{shown}`: {reason}"))?;
+    Ok(spelled)
+}
+
+/// Where a granted host path is served from and seen at: `(the directory to open, the guest
+/// path)`. The grant is placed against the jail root as configured and, failing that, as the
+/// filesystem spells it (every link resolved: `/private/var/…` for `/var/…` on macOS), the two
+/// spellings ikigai-fs places a scope against, so one grant string names one directory in both.
+/// The directory opened is always the root joined with plain names.
+fn place(host_path: &str, root: &Path) -> Result<(PathBuf, String), String> {
+    use ikigai_runtime::grants::guest_path_in_jail;
+    let spelled = check_jail_root_path(root)?;
+    let (base, guest) = match guest_path_in_jail(host_path, &spelled) {
+        Ok(guest) => (root.to_path_buf(), guest),
+        Err(refusal) => std::fs::canonicalize(root)
+            .ok()
+            .filter(|canonical| canonical.as_path() != root)
+            .and_then(|canonical| {
+                let spelled = check_jail_root_path(&canonical).ok()?;
+                let guest = guest_path_in_jail(host_path, &spelled).ok()?;
+                Some((canonical, guest))
+            })
+            .ok_or(refusal)?,
+    };
+    let relative = Path::new(guest.trim_start_matches('/'));
+    if !relative
+        .components()
+        .all(|c| matches!(c, Component::Normal(_)))
+    {
+        return Err(format!(
+            "`{host_path}` does not name a path under the jail root"
+        ));
+    }
+    Ok((base.join(relative), guest))
+}
+
 /// Apply a plan's grants to a deterministic builder. Errors name the grant the host could not
-/// serve (an `fs` grant with no jail root, a preopen that does not exist).
+/// serve: an `fs` grant with no jail root, one outside the jail root (naming the root), a preopen
+/// that does not exist.
 pub fn apply_plan(
     builder: &mut WasiCtxBuilder,
     plan: &WasiPlan,
@@ -156,38 +229,22 @@ pub fn apply_plan(
         let Some(root) = &host.fs_root else {
             return Err(format!(
                 "urn:cap:fs grant for `{}`: this host has no jail root to serve it from",
-                preopen.guest_path
+                preopen.host_path
             ));
         };
-        // Defense in depth: the plan already refused a path that could leave the jail root
-        // (`check_fs_path`); a plan built some other way is checked again here, and the joined
-        // path must be the root plus plain names only.
-        ikigai_runtime::grants::check_fs_path(&preopen.guest_path)
-            .map_err(|reason| format!("urn:cap:fs grant for `{}`: {reason}", preopen.guest_path))?;
-        let relative = std::path::Path::new(preopen.guest_path.trim_start_matches('/'));
-        if !relative
-            .components()
-            .all(|c| matches!(c, std::path::Component::Normal(_)))
-        {
-            return Err(format!(
-                "urn:cap:fs grant for `{}`: it does not name a path under the jail root",
-                preopen.guest_path
-            ));
-        }
-        let host_path = root.join(relative);
+        let (dir, guest) = place(&preopen.host_path, root)
+            .map_err(|reason| format!("urn:cap:fs grant for `{}`: {reason}", preopen.host_path))?;
         let perms = match preopen.access {
             FsAccess::ReadOnly => FsPerms::ReadOnly,
             FsAccess::ReadWrite => FsPerms::ReadWrite,
         };
-        builder
-            .preopened_dir(&host_path, &preopen.guest_path, perms)
-            .map_err(|e| {
-                format!(
-                    "urn:cap:fs grant for `{}`: preopen {}: {e:#}",
-                    preopen.guest_path,
-                    host_path.display()
-                )
-            })?;
+        builder.preopened_dir(&dir, &guest, perms).map_err(|e| {
+            format!(
+                "urn:cap:fs grant for `{}`: preopen {}: {e:#}",
+                preopen.host_path,
+                dir.display()
+            )
+        })?;
     }
     for name in &plan.env_names {
         if let Some(value) = host.env.get(name) {
@@ -244,23 +301,75 @@ mod tests {
 
     #[test]
     fn apply_plan_refuses_a_preopen_outside_the_jail_root_even_if_the_plan_holds_one() {
-        // A plan built by hand (not by `wasi_plan`, which refuses it first).
-        let mut plan =
+        // A plan built by hand: `wasi_plan` refuses the first spelling itself, and only the jail
+        // placement can refuse the second.
+        let plan =
             ikigai_runtime::wasi_plan(&ikigai_runtime::Grants::from_scopes(std::iter::empty::<
                 String,
             >()))
             .unwrap();
-        plan.fs.push(ikigai_runtime::grants::FsPreopen {
-            guest_path: "/../outside".into(),
-            access: FsAccess::ReadOnly,
-        });
+        let root = std::env::temp_dir().join("ikigai-runtime-apply-plan");
+        let spelled = check_jail_root_path(&root).unwrap();
         let host = AppHost {
-            fs_root: Some(std::env::temp_dir()),
+            fs_root: Some(root.clone()),
             ..AppHost::default()
         };
-        let mut builder = deterministic_builder(&[0; 32]);
-        let err = apply_plan(&mut builder, &plan, &host).unwrap_err();
-        assert!(err.contains("/../outside"), "{err}");
+        for path in [format!("{spelled}/../outside"), "/elsewhere".to_string()] {
+            let mut plan = plan.clone();
+            plan.fs.push(ikigai_runtime::grants::FsPreopen {
+                host_path: path.clone(),
+                access: FsAccess::ReadOnly,
+            });
+            let mut builder = deterministic_builder(&[0; 32]);
+            let err = apply_plan(&mut builder, &plan, &host).unwrap_err();
+            assert!(err.contains(&path), "{err}");
+        }
+    }
+
+    #[test]
+    fn a_grant_is_placed_under_the_jail_root_and_seen_at_its_part_below_it() {
+        let root = Path::new("/srv/jail");
+        assert_eq!(
+            place("/srv/jail/ws", root).unwrap(),
+            (PathBuf::from("/srv/jail/ws"), "/ws".to_string())
+        );
+        assert_eq!(
+            place("/srv/jail", root).unwrap(),
+            (PathBuf::from("/srv/jail"), "/".to_string())
+        );
+        let err = place("/ws", root).unwrap_err();
+        assert!(err.contains("/ws") && err.contains("/srv/jail"), "{err}");
+    }
+
+    /// ikigai-fs places a scope against the root as mounted AND as the filesystem spells it, so
+    /// a grant written against either spelling names one directory in both.
+    #[cfg(unix)]
+    #[test]
+    fn a_grant_spelled_against_the_resolved_jail_root_is_placed_too() {
+        let base =
+            std::env::temp_dir().join(format!("ikigai-runtime-place-{}", std::process::id()));
+        let real = base.join("real");
+        let link = base.join("link");
+        std::fs::create_dir_all(real.join("ws")).unwrap();
+        std::os::unix::fs::symlink(&real, &link).unwrap();
+        let resolved = std::fs::canonicalize(&real).unwrap();
+        let grant = format!("{}/ws", check_jail_root_path(&resolved).unwrap());
+        let placed = place(&grant, &link);
+        let outside = place("/elsewhere/ws", &link);
+        let _ = std::fs::remove_dir_all(&base);
+        assert_eq!(placed.unwrap(), (resolved.join("ws"), "/ws".to_string()));
+        assert!(outside.is_err());
+    }
+
+    #[test]
+    fn a_jail_root_of_slash_or_a_relative_or_climbing_one_is_refused() {
+        for bad in ["/", "srv/jail", "/srv/../jail"] {
+            assert!(check_jail_root_path(Path::new(bad)).is_err(), "{bad}");
+        }
+        assert_eq!(
+            check_jail_root_path(Path::new("/srv/./jail/")).unwrap(),
+            "/srv/jail"
+        );
     }
 
     #[test]

@@ -6,7 +6,7 @@
 //! | authority | endpoint world, and app with no grant | app world, the grant alone |
 //! |---|---|---|
 //! | args, env | `[]`, absent | `urn:cap:env:HOME`: exactly that value, from the HOST |
-//! | read `/`, read or write `/data` | no preopen | `fs:read:/data` reads, cannot write; `fs:write`+`fs:delete` writes |
+//! | read `/`, read or write `/data` | no preopen | `fs:read:<jail>/data` (a HOST path, as in ikigai-fs) reads `/data`, cannot write; `fs:write`+`fs:delete` writes; a path outside the jail, or an exclusion under the preopen, is refused |
 //! | TCP connect | refused at the import | `net:<ip>:<port>`: that address and no other |
 //! | DNS | refused at the import | still refused (never granted) |
 //! | spawn | `Unsupported` (no WASI interface) | `Unsupported` |
@@ -245,7 +245,9 @@ async fn fs_read_preopens_read_only_and_write_needs_write_and_delete() {
         },
     )
     .await;
-    let read = ["urn:cap:fs:read:/data"];
+    let data = format!("{}/data", root.display());
+    let read_grant = format!("urn:cap:fs:read:{data}");
+    let read = [read_grant.as_str()];
     assert_eq!(
         probe.run("read-data", &[], &read).await,
         "ok: \"inside the jail\""
@@ -258,7 +260,11 @@ async fn fs_read_preopens_read_only_and_write_needs_write_and_delete() {
             .starts_with("err:"),
         "a read grant cannot write"
     );
-    let write = ["urn:cap:fs:write:/data", "urn:cap:fs:delete:/data"];
+    let (write_grant, delete_grant) = (
+        format!("urn:cap:fs:write:{data}"),
+        format!("urn:cap:fs:delete:{data}"),
+    );
+    let write = [write_grant.as_str(), delete_grant.as_str()];
     assert_eq!(
         probe
             .run("write-data", &[("text", "written")], &write)
@@ -426,5 +432,95 @@ async fn a_grant_path_that_climbs_out_of_the_jail_root_is_refused() {
             )
         }
         other => panic!("the jail root must hold; got {other:?}"),
+    }
+}
+
+/// Claim 1 of the review at fe22b361: `urn:cap:fs:read:/data` was served from `<jail>/data`,
+/// while ikigai-fs reads the same string as the host directory `/data`. A grant names the host
+/// path now: `/data` is outside this jail and refused, naming the grant and the jail root, and
+/// `<jail>/data` is what serves the guest's `/data`.
+#[tokio::test]
+async fn an_fs_grant_names_a_host_path_and_only_one_inside_the_jail_is_served() {
+    let root = jail("host-path");
+    let probe = Probe::mount(
+        World::App,
+        AppHost {
+            fs_root: Some(root.clone()),
+            ..AppHost::default()
+        },
+    )
+    .await;
+    let outside = probe
+        .try_("read-data", &[], &["urn:cap:fs:read:/data"])
+        .await;
+    let inside_grant = format!("urn:cap:fs:read:{}/data", root.display());
+    let inside = probe.try_("read-data", &[], &[&inside_grant]).await;
+    let _ = std::fs::remove_dir_all(&root);
+    match outside {
+        Err(Error::Denied(message)) => assert!(
+            message.contains("`/data`") && message.contains("jail root"),
+            "names the grant and the jail root: {message}"
+        ),
+        other => panic!("a grant outside the jail must be refused; got {other:?}"),
+    }
+    assert_eq!(inside.unwrap(), "ok: \"inside the jail\"");
+}
+
+/// Claim 2 of the review at fe22b361: an exclusion under a preopened path was dropped, so the
+/// guest read the excluded file through WASI. The call is refused now, naming both scopes.
+#[tokio::test]
+async fn an_fs_exclusion_under_a_preopen_refuses_the_call() {
+    let root = jail("deny");
+    std::fs::create_dir_all(root.join("data").join("secret")).unwrap();
+    std::fs::write(root.join("data").join("secret").join("s.txt"), "secret").unwrap();
+    let probe = Probe::mount(
+        World::App,
+        AppHost {
+            fs_root: Some(root.clone()),
+            ..AppHost::default()
+        },
+    )
+    .await;
+    let allow = format!("urn:cap:fs:read:{}/data", root.display());
+    let deny = format!("urn:cap:fs:read:-{}/data/secret", root.display());
+    let answer = probe
+        .try_(
+            "read-path",
+            &[("path", "/data/secret/s.txt")],
+            &[&allow, &deny],
+        )
+        .await;
+    let _ = std::fs::remove_dir_all(&root);
+    match answer {
+        Err(Error::Denied(message)) => assert!(
+            message.contains(&deny) && message.contains(&allow),
+            "names both scopes: {message}"
+        ),
+        other => panic!("the exclusion must hold; got {other:?}"),
+    }
+}
+
+/// A jail root of `/` would serve the whole disk behind any fs grant: the mount refuses it.
+#[tokio::test]
+async fn a_jail_root_of_slash_is_refused_at_mount() {
+    let engine = ComponentEngine::new(Limits::fuel(u64::MAX)).unwrap();
+    let refused = engine
+        .mount(
+            &Artifact::from_bytes(PROBE.to_vec()),
+            AppConfig::new("probe", World::App)
+                .ceiling(Capability::root())
+                .host(AppHost {
+                    fs_root: Some(PathBuf::from("/")),
+                    ..AppHost::default()
+                }),
+        )
+        .await;
+    match refused {
+        Err(Error::InvalidArgument { name, detail }) => {
+            assert_eq!(name, "fs_root");
+            assert!(detail.contains("whole disk"), "{detail}");
+        }
+        Err(other) => panic!("expected InvalidArgument, got {other:?}"),
+        Ok(_) => panic!("a jail root of `/` was mounted"),
     }
 }

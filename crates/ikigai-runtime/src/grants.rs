@@ -53,8 +53,11 @@ pub enum FsAccess {
 /// One preopened directory in the plan.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct FsPreopen {
-    /// The path as the guest sees it (also the deepest grant's root).
-    pub guest_path: String,
+    /// The HOST directory the grant names, exactly as ikigai-fs reads the same string: one grant,
+    /// one directory, whether it reaches the file through WASI or through `urn:file:*`. The engine
+    /// serves it only when it is the jail root or under it, at the guest path
+    /// [`guest_path_in_jail`] gives.
+    pub host_path: String,
     pub access: FsAccess,
 }
 
@@ -163,18 +166,17 @@ impl core::fmt::Display for PlanError {
 
 impl std::error::Error for PlanError {}
 
-/// Check an `fs` grant's path before it names a preopen (R-D3). A preopen is served from
-/// `<jail root>/<path>`, so the path must stay inside the jail root by its own spelling: it must
-/// be absolute, and no segment may be empty, `.` or `..`. It is REFUSED, never normalized: a
-/// grant that needs normalizing is not the grant the host meant to give, and `..` against a
-/// symlink resolves differently on disk than on paper. `/` alone is the jail root itself.
+/// Check the spelling of an `fs` grant's path before it names a preopen (R-D3). The path is a
+/// HOST path, as in ikigai-fs, so it must be absolute, and no segment may be empty, `.` or `..`.
+/// It is REFUSED, never normalized: a grant that needs normalizing is not the grant the host meant
+/// to give, and `..` against a symlink resolves differently on disk than on paper. This checks
+/// the spelling only; whether the path is inside the jail is [`guest_path_in_jail`]'s question.
 ///
 /// ```
 /// use ikigai_runtime::grants::check_fs_path;
 ///
-/// assert!(check_fs_path("/data").is_ok());
-/// assert!(check_fs_path("/data/in").is_ok());
-/// assert!(check_fs_path("/").is_ok());
+/// assert!(check_fs_path("/srv/jail/data").is_ok());
+/// assert!(check_fs_path("/").is_ok()); // well spelled; the jail placement refuses it
 /// for bad in ["data", "", "/../outside", "/data/..", "/data/./x", "/data//x", "/data/"] {
 ///     assert!(check_fs_path(bad).is_err(), "{bad:?} must be refused");
 /// }
@@ -182,7 +184,7 @@ impl std::error::Error for PlanError {}
 pub fn check_fs_path(path: &str) -> Result<(), String> {
     let Some(rest) = path.strip_prefix('/') else {
         return Err(format!(
-            "the path `{path}` is not absolute; an fs grant names a path under the jail root"
+            "the path `{path}` is not absolute; an fs grant names a host path"
         ));
     };
     if rest.is_empty() {
@@ -199,9 +201,93 @@ pub fn check_fs_path(path: &str) -> Result<(), String> {
     Ok(())
 }
 
+/// Check a jail root, as the host spells it with plain segments (`/srv/jail`): it must pass
+/// [`check_fs_path`], and it must not be `/`. A jail root of `/` would preopen the whole disk
+/// behind any grant, which is not a jail; a host refuses it when it is configured.
+///
+/// ```
+/// use ikigai_runtime::grants::check_jail_root;
+///
+/// assert!(check_jail_root("/srv/jail").is_ok());
+/// assert!(check_jail_root("/").is_err());
+/// assert!(check_jail_root("srv/jail").is_err());
+/// ```
+pub fn check_jail_root(root: &str) -> Result<(), String> {
+    check_fs_path(root).map_err(|reason| format!("the jail root: {reason}"))?;
+    if root == "/" {
+        return Err(
+            "a jail root of `/` would serve the whole disk, which is not a jail; it is refused"
+                .to_string(),
+        );
+    }
+    Ok(())
+}
+
+/// Place an `fs` grant's HOST path in the jail, answering the GUEST path its preopen appears at.
+///
+/// A grant names a host path (one grant, one directory, as in ikigai-fs). It is served only when
+/// it is the jail root or under it, compared segment by segment (so `/srv/jailx` is not under
+/// `/srv/jail`); anything else is REFUSED, naming the path and the jail root, never skipped. `/`
+/// is no special case: it is outside every jail root, because [`check_jail_root`] refuses `/`.
+/// An ancestor of the jail root is refused too, where ikigai-fs would read it as covering the
+/// whole jail: WASI would then be asked to preopen more than the grant's directory, so the host
+/// refuses rather than guess.
+///
+/// The guest sees the part of the host path under the jail root (`/ws` for `<jail>/ws`, `/` for
+/// the jail root itself), so a component's paths do not depend on where a host keeps its jail,
+/// and two hosts with different jail roots run one component unchanged.
+///
+/// ```
+/// use ikigai_runtime::grants::guest_path_in_jail;
+///
+/// assert_eq!(guest_path_in_jail("/srv/jail/ws", "/srv/jail").unwrap(), "/ws");
+/// assert_eq!(guest_path_in_jail("/srv/jail/ws/in", "/srv/jail").unwrap(), "/ws/in");
+/// assert_eq!(guest_path_in_jail("/srv/jail", "/srv/jail").unwrap(), "/");
+/// for outside in ["/ws", "/", "/srv", "/srv/jailx", "/srv/jail/../x"] {
+///     assert!(guest_path_in_jail(outside, "/srv/jail").is_err(), "{outside:?}");
+/// }
+/// // A jail root of `/` is refused, so `/` is never served.
+/// assert!(guest_path_in_jail("/", "/").is_err());
+/// ```
+pub fn guest_path_in_jail(host_path: &str, jail_root: &str) -> Result<String, String> {
+    check_jail_root(jail_root)?;
+    check_fs_path(host_path)?;
+    let root: Vec<&str> = segments(jail_root).collect();
+    let path: Vec<&str> = segments(host_path).collect();
+    match path.strip_prefix(root.as_slice()) {
+        Some(rest) => Ok(format!("/{}", rest.join("/"))),
+        None => Err(format!(
+            "the host path `{host_path}` is outside the jail root `{jail_root}`; an fs grant \
+             names a host path, and only the jail root or a path under it is served"
+        )),
+    }
+}
+
+/// The segments of a path [`check_fs_path`] accepted (none for `/`).
+fn segments(path: &str) -> impl Iterator<Item = &str> {
+    path.split('/').filter(|s| !s.is_empty())
+}
+
+/// Whether `path` is `base` or under it, segment by segment.
+fn at_or_under(path: &str, base: &str) -> bool {
+    let mut path = segments(path);
+    segments(base).all(|b| path.next() == Some(b))
+}
+
 /// Derive the WASI plan from the grants a caller holds. **Pure** — the engine fills the values
-/// (env values, the injected clock, the CSPRNG); this function makes only the decision. An `fs`
-/// grant whose path could leave the jail root is refused ([`check_fs_path`]), naming the grant.
+/// (env values, the injected clock, the CSPRNG); this function makes only the decision.
+///
+/// Two `fs` refusals, each naming the grant, never a silent skip:
+/// - a path that is not a plain absolute host path ([`check_fs_path`]);
+/// - an exclusion (`urn:cap:fs:read:-/ws/secret`) at or under a path the plan preopens, when the
+///   preopen's access covers the exclusion's verb. A WASI preopen cannot express "all of `/ws`
+///   except `secret`", and serving the preopen would widen the capability, so the plan is refused
+///   naming both scopes. An exclusion under no preopen changes nothing here (it still binds
+///   `urn:file:*`); one whose path cannot be placed (relative, or with an empty, `.` or `..`
+///   segment) is refused while the plan preopens anything it could cover.
+///
+/// Whether a preopen's host path is inside the jail is the engine's check, against its jail
+/// root ([`guest_path_in_jail`]).
 pub fn wasi_plan(grants: &Grants) -> Result<WasiPlan, PlanError> {
     let scopes = match grants {
         Grants::Root => return Ok(WasiPlan::everything()),
@@ -216,14 +302,26 @@ pub fn wasi_plan(grants: &Grants) -> Result<WasiPlan, PlanError> {
     let mut fs_read: BTreeSet<&str> = BTreeSet::new();
     let mut fs_write: BTreeSet<&str> = BTreeSet::new();
     let mut fs_delete: BTreeSet<&str> = BTreeSet::new();
+    // fs exclusions as (the scope, its verb, its path after the `-`), checked against the
+    // preopens once those are known.
+    let mut fs_denies: Vec<(&String, &str, &str)> = Vec::new();
 
     for scope in scopes {
-        // Deny-shaped exclusions narrow a capability; the plan is a positive derivation and
-        // ignores them (ikigai_core::is_deny_scope is the shared test).
         let Some(rest) = scope.strip_prefix("urn:cap:") else {
             continue;
         };
+        // Deny-shaped exclusions never grant (ikigai_core::is_deny_scope is the shared test).
+        // An fs exclusion is kept, because a preopen it falls under cannot honor it.
         if ikigai_core::is_deny_scope(scope) {
+            if let Some((verb, path)) = rest
+                .strip_prefix("fs:")
+                .and_then(|rule| rule.split_once(':'))
+                .and_then(|(verb, path)| Some((verb, path.strip_prefix('-')?)))
+            {
+                if matches!(verb, "read" | "write" | "delete") {
+                    fs_denies.push((scope, verb, path));
+                }
+            }
             continue;
         }
         let (family, rule) = match rest.split_once(':') {
@@ -276,8 +374,47 @@ pub fn wasi_plan(grants: &Grants) -> Result<WasiPlan, PlanError> {
         };
         if let Some(access) = access {
             plan.fs.push(FsPreopen {
-                guest_path: path.to_string(),
+                host_path: path.to_string(),
                 access,
+            });
+        }
+    }
+
+    // An exclusion a preopen would serve anyway: refuse, never widen. A read-only preopen
+    // serves reads; a read-write one serves every fs verb.
+    for (deny, verb, path) in fs_denies {
+        let covers = |p: &FsPreopen| verb == "read" || p.access == FsAccess::ReadWrite;
+        let mut covering = plan.fs.iter().filter(|p| covers(p)).peekable();
+        if covering.peek().is_none() {
+            continue;
+        }
+        if let Err(reason) = check_fs_path(path) {
+            return Err(PlanError {
+                scope: deny.clone(),
+                reason: format!(
+                    "the exclusion cannot be placed against this run's preopens ({reason}); \
+                     it is refused rather than dropped"
+                ),
+            });
+        }
+        if let Some(preopen) = covering.find(|p| at_or_under(path, &p.host_path)) {
+            let held: Vec<String> = [
+                ("read", &fs_read),
+                ("write", &fs_write),
+                ("delete", &fs_delete),
+            ]
+            .into_iter()
+            .filter(|(_, set)| set.contains(preopen.host_path.as_str()))
+            .map(|(v, _)| format!("urn:cap:fs:{v}:{}", preopen.host_path))
+            .collect();
+            return Err(PlanError {
+                scope: deny.clone(),
+                reason: format!(
+                    "it falls at or under the preopen of `{}` (from {}), and a WASI preopen \
+                     cannot exclude a path inside it; the plan is refused rather than widened",
+                    preopen.host_path,
+                    held.join(" + ")
+                ),
             });
         }
     }
@@ -325,7 +462,7 @@ mod tests {
         assert_eq!(
             p.fs,
             vec![FsPreopen {
-                guest_path: "/data".into(),
+                host_path: "/data".into(),
                 access: FsAccess::ReadOnly
             }]
         );
@@ -337,7 +474,7 @@ mod tests {
         assert_eq!(
             rw.fs,
             vec![FsPreopen {
-                guest_path: "/out".into(),
+                host_path: "/out".into(),
                 access: FsAccess::ReadWrite
             }]
         );
@@ -408,8 +545,80 @@ mod tests {
         assert!(!p.spawn);
     }
 
+    /// Claim 2 of the review at fe22b361: the plan used to drop every exclusion, so
+    /// `read:/ws` + `read:-/ws/secret` preopened all of `/ws`, `secret` included.
     #[test]
-    fn row_fs_a_path_that_could_leave_the_jail_root_is_refused_naming_the_grant() {
+    fn an_fs_exclusion_at_or_under_a_preopen_refuses_the_plan_naming_both_scopes() {
+        for deny in ["urn:cap:fs:read:-/ws/secret", "urn:cap:fs:read:-/ws"] {
+            let err = wasi_plan(&Grants::from_scopes(["urn:cap:fs:read:/ws", deny])).unwrap_err();
+            assert_eq!(err.scope, deny);
+            assert!(err.reason.contains("urn:cap:fs:read:/ws"), "{err}");
+        }
+        // A read-write preopen serves every verb, so any verb's exclusion under it refuses.
+        let rw = ["urn:cap:fs:write:/ws", "urn:cap:fs:delete:/ws"];
+        for deny in [
+            "urn:cap:fs:read:-/ws/secret",
+            "urn:cap:fs:write:-/ws/secret",
+            "urn:cap:fs:delete:-/ws/secret",
+        ] {
+            let scopes = rw.iter().copied().chain([deny]);
+            let err = wasi_plan(&Grants::from_scopes(scopes)).unwrap_err();
+            assert_eq!(err.scope, deny);
+            assert!(
+                err.reason
+                    .contains("urn:cap:fs:write:/ws + urn:cap:fs:delete:/ws"),
+                "{err}"
+            );
+        }
+    }
+
+    #[test]
+    fn an_fs_exclusion_no_preopen_could_serve_changes_nothing() {
+        let expected = plan_of(&["urn:cap:fs:read:/ws"]);
+        for deny in [
+            "urn:cap:fs:read:-/elsewhere/secret",
+            // An ancestor: the deeper allow wins in ikigai-fs, so the preopen is what it grants.
+            "urn:cap:fs:read:-/",
+            // `/wsx` is not under `/ws`, segment by segment.
+            "urn:cap:fs:read:-/wsx",
+            // A read-only preopen cannot write or delete, so those exclusions are already held.
+            "urn:cap:fs:write:-/ws/secret",
+            "urn:cap:fs:delete:-/ws/secret",
+        ] {
+            assert_eq!(plan_of(&["urn:cap:fs:read:/ws", deny]), expected, "{deny}");
+        }
+        // With no preopen at all, even an unplaceable exclusion is nothing to the plan.
+        assert!(plan_of(&["urn:cap:fs:read:-secret"]).fs.is_empty());
+    }
+
+    #[test]
+    fn an_fs_exclusion_that_cannot_be_placed_beside_a_preopen_is_refused() {
+        for deny in [
+            "urn:cap:fs:read:-secret",
+            "urn:cap:fs:read:-/ws/../ws/secret",
+        ] {
+            let err = wasi_plan(&Grants::from_scopes(["urn:cap:fs:read:/ws", deny])).unwrap_err();
+            assert_eq!(err.scope, deny);
+        }
+    }
+
+    /// Claim 1 of the review at fe22b361: a grant used to name `<jail root>/<path>` here and the
+    /// host path `<path>` in ikigai-fs. Now it names the host path in both, and only a path at
+    /// or under the jail root is served.
+    #[test]
+    fn a_grant_names_a_host_path_and_is_served_only_inside_the_jail() {
+        assert_eq!(guest_path_in_jail("/tmp/j/x", "/tmp/j").unwrap(), "/x");
+        assert_eq!(guest_path_in_jail("/tmp/j", "/tmp/j").unwrap(), "/");
+        for outside in ["/x", "/", "/tmp", "/tmp/jx", "/tmp/k/x"] {
+            let err = guest_path_in_jail(outside, "/tmp/j").unwrap_err();
+            assert!(err.contains(outside) && err.contains("/tmp/j"), "{err}");
+        }
+        assert!(guest_path_in_jail("/", "/").is_err());
+        assert!(guest_path_in_jail("/x", "/").is_err());
+    }
+
+    #[test]
+    fn row_fs_a_path_that_is_not_plain_and_absolute_is_refused_naming_the_grant() {
         for scope in [
             "urn:cap:fs:read:/../outside",
             "urn:cap:fs:read:/data/../../outside",

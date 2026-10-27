@@ -29,7 +29,9 @@ use crate::budget::{
     apply_budget, check_metering, consumed_of, engine_for, trap_to_error, EpochTicker, HostRefusal,
     MemLimiter, Metering,
 };
-use crate::wasi::{apply_plan, deterministic_builder, seed_of, AppHost, STDIO_CAPACITY};
+use crate::wasi::{
+    apply_plan, check_jail_root_path, deterministic_builder, seed_of, AppHost, STDIO_CAPACITY,
+};
 
 /// Which `ikigai:runtime` world a component runs in (R-D2).
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -218,6 +220,21 @@ impl ComponentEngine {
                     "`{name}` is not one name segment; a mount answers under urn:runtime:app:{{app}}:"
                 ),
             });
+        }
+        // A jail root of `/` (or one that resolves to it through a link) would serve the whole
+        // disk behind any fs grant: refused when the host configures it, not on the first call.
+        if let Some(root) = &config.host.fs_root {
+            let canonical = std::fs::canonicalize(root).ok();
+            check_jail_root_path(root)
+                .and_then(|_| {
+                    canonical
+                        .as_deref()
+                        .map_or(Ok(()), |c| check_jail_root_path(c).map(|_| ()))
+                })
+                .map_err(|detail| Error::InvalidArgument {
+                    name: "fs_root".into(),
+                    detail,
+                })?;
         }
         let component = self.compile(artifact).map_err(|e| Error::InvalidArgument {
             name: "artifact".into(),
