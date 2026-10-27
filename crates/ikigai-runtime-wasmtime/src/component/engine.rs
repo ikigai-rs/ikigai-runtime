@@ -385,11 +385,15 @@ impl MountedApp {
         request: &Request,
         caller_limits: Limits,
         host: Arc<dyn HostResolver>,
-    ) -> Session {
+    ) -> Result<Session, Error> {
         let capability = self.config.ceiling.clamp(caller);
+        // A grant the plan refuses (an fs path that could leave the jail root) fails the call,
+        // naming the grant: never a silent skip.
+        let refused =
+            |e: ikigai_runtime::PlanError| Error::Denied(format!("{}: {e}", self.config.app));
         let (plan, shape) = match self.config.world {
             World::Endpoint => (
-                wasi_plan(&Grants::from_scopes(std::iter::empty::<String>())),
+                wasi_plan(&Grants::from_scopes(std::iter::empty::<String>())).map_err(refused)?,
                 LinkShape {
                     sockets: false,
                     http: false,
@@ -397,7 +401,7 @@ impl MountedApp {
             ),
             World::App => {
                 let grants = Grants::from_capability(&capability);
-                let plan = wasi_plan(&grants);
+                let plan = wasi_plan(&grants).map_err(refused)?;
                 let root = matches!(grants, Grants::Root);
                 let shape = LinkShape {
                     sockets: root || !plan.net.ip_rules.is_empty(),
@@ -411,14 +415,14 @@ impl MountedApp {
             .limits
             .meet(&Limits::from_grants(&Grants::from_capability(caller)))
             .meet(&caller_limits);
-        Session {
+        Ok(Session {
             capability,
             plan,
             shape,
             limits,
             host,
             seed_input: postcard::to_allocvec(request).unwrap_or_default(),
-        }
+        })
     }
 
     /// Whether this call's answer may be cached (R-D4: by world, never by guess).
@@ -640,7 +644,7 @@ impl MountedApp {
             &request,
             Limits::unbounded(),
             Arc::new(ikigai_runtime::NoHost),
-        );
+        )?;
         session.shape = LinkShape {
             sockets: false,
             http: false,

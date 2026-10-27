@@ -159,7 +159,22 @@ pub fn apply_plan(
                 preopen.guest_path
             ));
         };
-        let host_path = root.join(preopen.guest_path.trim_start_matches('/'));
+        // Defense in depth: the plan already refused a path that could leave the jail root
+        // (`check_fs_path`); a plan built some other way is checked again here, and the joined
+        // path must be the root plus plain names only.
+        ikigai_runtime::grants::check_fs_path(&preopen.guest_path)
+            .map_err(|reason| format!("urn:cap:fs grant for `{}`: {reason}", preopen.guest_path))?;
+        let relative = std::path::Path::new(preopen.guest_path.trim_start_matches('/'));
+        if !relative
+            .components()
+            .all(|c| matches!(c, std::path::Component::Normal(_)))
+        {
+            return Err(format!(
+                "urn:cap:fs grant for `{}`: it does not name a path under the jail root",
+                preopen.guest_path
+            ));
+        }
+        let host_path = root.join(relative);
         let perms = match preopen.access {
             FsAccess::ReadOnly => FsPerms::ReadOnly,
             FsAccess::ReadWrite => FsPerms::ReadWrite,
@@ -226,6 +241,27 @@ fn admits(rules: &[String], implicit: bool, addr: SocketAddr, usage: SocketAddrU
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn apply_plan_refuses_a_preopen_outside_the_jail_root_even_if_the_plan_holds_one() {
+        // A plan built by hand (not by `wasi_plan`, which refuses it first).
+        let mut plan =
+            ikigai_runtime::wasi_plan(&ikigai_runtime::Grants::from_scopes(std::iter::empty::<
+                String,
+            >()))
+            .unwrap();
+        plan.fs.push(ikigai_runtime::grants::FsPreopen {
+            guest_path: "/../outside".into(),
+            access: FsAccess::ReadOnly,
+        });
+        let host = AppHost {
+            fs_root: Some(std::env::temp_dir()),
+            ..AppHost::default()
+        };
+        let mut builder = deterministic_builder(&[0; 32]);
+        let err = apply_plan(&mut builder, &plan, &host).unwrap_err();
+        assert!(err.contains("/../outside"), "{err}");
+    }
 
     #[test]
     fn the_seed_depends_on_artifact_and_input() {

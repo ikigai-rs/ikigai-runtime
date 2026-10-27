@@ -188,9 +188,9 @@ impl Endpoint for ExportEndpoint {
             }
         }
         let (resolver, requests) = bridge();
-        let session = self
-            .app
-            .session(inv.capability, inv.request, caller_limits(inv), resolver);
+        let session =
+            self.app
+                .session(inv.capability, inv.request, caller_limits(inv), resolver)?;
         let cacheable = self.app.cacheable(&session);
         // The session (and with it the bridge's last sender) moves into the call and is dropped
         // when the call ends, which ends the loop serving the guest's kernel requests.
@@ -241,9 +241,9 @@ impl Endpoint for ApiEndpoint {
             args,
         };
         let (resolver, requests) = bridge();
-        let session = self
-            .app
-            .session(inv.capability, inv.request, caller_limits(inv), resolver);
+        let session =
+            self.app
+                .session(inv.capability, inv.request, caller_limits(inv), resolver)?;
         let cacheable = self.app.cacheable(&session);
         let (ran, ()) = join!(
             self.app.call_api(request, session),

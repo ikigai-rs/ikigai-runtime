@@ -387,3 +387,44 @@ async fn stdout_is_captured_to_the_trace_never_the_hosts_and_fuel_is_noted() {
     let fuel: u64 = note("runtime.fuel").expect("fuel noted").parse().unwrap();
     assert!(fuel > 0);
 }
+
+/// A grant whose path climbs out of the jail root must never preopen outside it. The ceiling is
+/// ROOT, so core's `attenuate` passes the caller's scope through as written: the plan is the
+/// only place that can refuse it.
+#[tokio::test]
+async fn a_grant_path_that_climbs_out_of_the_jail_root_is_refused() {
+    let base = std::env::temp_dir().join(format!(
+        "ikigai-runtime-probe-{}-escape",
+        std::process::id()
+    ));
+    let root = base.join("jail");
+    let outside = base.join("outside");
+    std::fs::create_dir_all(&root).unwrap();
+    std::fs::create_dir_all(&outside).unwrap();
+    std::fs::write(outside.join("secret.txt"), "outside the jail").unwrap();
+    let probe = Probe::mount(
+        World::App,
+        AppHost {
+            fs_root: Some(root.clone()),
+            ..AppHost::default()
+        },
+    )
+    .await;
+    let answer = probe
+        .try_(
+            "read-path",
+            &[("path", "/../outside/secret.txt")],
+            &["urn:cap:fs:read:/../outside"],
+        )
+        .await;
+    let _ = std::fs::remove_dir_all(&base);
+    match answer {
+        Err(Error::Denied(message)) => {
+            assert!(
+                message.contains("/../outside"),
+                "names the grant: {message}"
+            )
+        }
+        other => panic!("the jail root must hold; got {other:?}"),
+    }
+}

@@ -11,6 +11,8 @@ interface probe {
   read-root: func() -> string;
   /// Read `/data/x.txt`.
   read-data: func() -> string;
+  /// Read any path the guest names (for the jail-root escape test).
+  read-path: func(path: string) -> string;
   /// Write `/data/out.txt`.
   write-data: func(text: string) -> string;
   /// Open a TCP connection.

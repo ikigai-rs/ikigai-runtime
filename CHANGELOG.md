@@ -19,6 +19,10 @@
 - `Metering::EpochOnly`: an engine without fuel, which refuses a fuel budget rather than ignoring it.
 - `Limits::from_grants`, `load_artifact`, `artifact_iri`.
 - R1's probe table as tests.
+- `wasi_plan` returns `Result<WasiPlan, PlanError>` (breaking): an `fs` grant whose path is not
+  absolute or has an empty, `.` or `..` segment is refused, naming the grant, never normalized
+  (`grants::check_fs_path`). Under a root ceiling such a grant used to preopen a directory
+  outside the jail root. `apply_plan` checks again.
 
 ## 0.2.0
 

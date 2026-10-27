@@ -38,6 +38,10 @@ impl Guest for Probe {
         io(std::fs::read_to_string("/data/x.txt"))
     }
 
+    fn read_path(path: String) -> String {
+        io(std::fs::read_to_string(path))
+    }
+
     fn write_data(text: String) -> String {
         io(std::fs::File::create("/data/out.txt").and_then(|mut f| f.write_all(text.as_bytes())))
     }

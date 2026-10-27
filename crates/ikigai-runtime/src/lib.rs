@@ -31,7 +31,9 @@ pub use engine::{
     Call, Consumed, CoreEngine, EngineError, HostFuture, HostResolver, Invoked, KernelResolver,
     NoHost, Output, Value,
 };
-pub use grants::{wasi_plan, ClockAccess, FsAccess, Grants, NetAccess, RandomAccess, WasiPlan};
+pub use grants::{
+    wasi_plan, ClockAccess, FsAccess, Grants, NetAccess, PlanError, RandomAccess, WasiPlan,
+};
 pub use limits::{Deadline, Limits, Provenance};
 pub use loader::{
     artifact_iri, load_artifact, Artifact, ArtifactDigest, CompiledKey, EngineCompatHash, LoadError,

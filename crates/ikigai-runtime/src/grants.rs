@@ -145,11 +145,66 @@ impl WasiPlan {
     }
 }
 
+/// A grant the plan refuses to serve, named with the reason. A refusal, never a silent skip: a
+/// grant the host cannot honor safely fails the call that holds it.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct PlanError {
+    /// The grant as the caller holds it (`urn:cap:fs:read:/../outside`).
+    pub scope: String,
+    /// Why it is refused.
+    pub reason: String,
+}
+
+impl core::fmt::Display for PlanError {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        write!(f, "{}: {}", self.scope, self.reason)
+    }
+}
+
+impl std::error::Error for PlanError {}
+
+/// Check an `fs` grant's path before it names a preopen (R-D3). A preopen is served from
+/// `<jail root>/<path>`, so the path must stay inside the jail root by its own spelling: it must
+/// be absolute, and no segment may be empty, `.` or `..`. It is REFUSED, never normalized: a
+/// grant that needs normalizing is not the grant the host meant to give, and `..` against a
+/// symlink resolves differently on disk than on paper. `/` alone is the jail root itself.
+///
+/// ```
+/// use ikigai_runtime::grants::check_fs_path;
+///
+/// assert!(check_fs_path("/data").is_ok());
+/// assert!(check_fs_path("/data/in").is_ok());
+/// assert!(check_fs_path("/").is_ok());
+/// for bad in ["data", "", "/../outside", "/data/..", "/data/./x", "/data//x", "/data/"] {
+///     assert!(check_fs_path(bad).is_err(), "{bad:?} must be refused");
+/// }
+/// ```
+pub fn check_fs_path(path: &str) -> Result<(), String> {
+    let Some(rest) = path.strip_prefix('/') else {
+        return Err(format!(
+            "the path `{path}` is not absolute; an fs grant names a path under the jail root"
+        ));
+    };
+    if rest.is_empty() {
+        return Ok(());
+    }
+    for segment in rest.split('/') {
+        if segment.is_empty() || segment == "." || segment == ".." {
+            return Err(format!(
+                "the path `{path}` has a `{segment}` segment; an fs grant path must not climb, \
+                 repeat or skip a segment, and it is refused rather than normalized"
+            ));
+        }
+    }
+    Ok(())
+}
+
 /// Derive the WASI plan from the grants a caller holds. **Pure** — the engine fills the values
-/// (env values, the injected clock, the CSPRNG); this function makes only the decision.
-pub fn wasi_plan(grants: &Grants) -> WasiPlan {
+/// (env values, the injected clock, the CSPRNG); this function makes only the decision. An `fs`
+/// grant whose path could leave the jail root is refused ([`check_fs_path`]), naming the grant.
+pub fn wasi_plan(grants: &Grants) -> Result<WasiPlan, PlanError> {
     let scopes = match grants {
-        Grants::Root => return WasiPlan::everything(),
+        Grants::Root => return Ok(WasiPlan::everything()),
         Grants::Scoped(scopes) => scopes,
     };
 
@@ -176,18 +231,19 @@ pub fn wasi_plan(grants: &Grants) -> WasiPlan {
             None => (rest, ""),
         };
         match family {
-            "fs" => match rule.split_once(':') {
-                Some(("read", path)) => {
-                    fs_read.insert(path);
-                }
-                Some(("write", path)) => {
-                    fs_write.insert(path);
-                }
-                Some(("delete", path)) => {
-                    fs_delete.insert(path);
-                }
-                _ => {}
-            },
+            "fs" => {
+                let (set, path) = match rule.split_once(':') {
+                    Some(("read", path)) => (&mut fs_read, path),
+                    Some(("write", path)) => (&mut fs_write, path),
+                    Some(("delete", path)) => (&mut fs_delete, path),
+                    _ => continue,
+                };
+                check_fs_path(path).map_err(|reason| PlanError {
+                    scope: scope.clone(),
+                    reason,
+                })?;
+                set.insert(path);
+            }
             "net" => {
                 if is_ip_literal_rule(rule) {
                     plan.net.ip_rules.push(rule.to_string());
@@ -227,7 +283,7 @@ pub fn wasi_plan(grants: &Grants) -> WasiPlan {
     }
 
     plan.net.implicit_unspecified_bind = !plan.net.ip_rules.is_empty();
-    plan
+    Ok(plan)
 }
 
 /// Whether a `net` rule names an IP literal (served at the socket) rather than a host or glob
@@ -247,7 +303,7 @@ mod tests {
     use super::*;
 
     fn plan_of(scopes: &[&str]) -> WasiPlan {
-        wasi_plan(&Grants::from_scopes(scopes.iter().copied()))
+        wasi_plan(&Grants::from_scopes(scopes.iter().copied())).expect("a servable plan")
     }
 
     #[test]
@@ -328,7 +384,7 @@ mod tests {
 
     #[test]
     fn row_root_unlocks_everything() {
-        let p = wasi_plan(&Grants::Root);
+        let p = wasi_plan(&Grants::Root).unwrap();
         assert_eq!(p.clock, ClockAccess::Wall);
         assert_eq!(p.random, RandomAccess::Secure);
         assert!(p.net.implicit_unspecified_bind);
@@ -350,5 +406,27 @@ mod tests {
         ]);
         assert!(!p.dns);
         assert!(!p.spawn);
+    }
+
+    #[test]
+    fn row_fs_a_path_that_could_leave_the_jail_root_is_refused_naming_the_grant() {
+        for scope in [
+            "urn:cap:fs:read:/../outside",
+            "urn:cap:fs:read:/data/../../outside",
+            "urn:cap:fs:write:/data/./x",
+            "urn:cap:fs:delete:/data//x",
+            "urn:cap:fs:read:relative",
+            "urn:cap:fs:read:",
+        ] {
+            let err = wasi_plan(&Grants::from_scopes([scope])).unwrap_err();
+            assert_eq!(err.scope, scope);
+            assert!(err.to_string().starts_with(scope), "{err}");
+        }
+        // One bad grant refuses the whole plan; it is never skipped beside a good one.
+        assert!(wasi_plan(&Grants::from_scopes([
+            "urn:cap:fs:read:/data",
+            "urn:cap:fs:read:/../outside",
+        ]))
+        .is_err());
     }
 }
