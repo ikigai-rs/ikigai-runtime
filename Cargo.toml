@@ -28,10 +28,26 @@ homepage = "https://github.com/ikigai-rs/ikigai-runtime"
 # 0.2.0 is the streams release (ledger #2261). The old 0.1 pin meant <0.2.0
 # under Cargo's 0.x caret rules. Core types are part of the runtime's public API.
 ikigai-core = "0.2.0"
+# The J2 session's wire types (R-D6 as amended 2026-10-27, option (b)): wire-only mirrors of
+# ikigai-module's `ModuleCall`/`ModuleReply`, byte-compatible with them and free of
+# ikigai-core, so a guest links the session and nothing else. 0.1.0 is the first release;
+# under 0.x caret rules this pin is `<0.2.0`, a ceiling as well as a floor (rule 5).
+ikigai-module-abi = "0.1.0"
+# The HOST keeps ikigai-module's typed session (R-D6 as amended): its `ModuleCall`/
+# `ModuleReply` over core's types, the `ModuleTransport` a jailed module is mounted through
+# (`ModuleSpace`), and `ModuleError`'s conversions to and from core's `Error`. 0.5.1 is the
+# release that re-exports the abi crate and converts to and from it; `<0.6.0` (rule 5).
+ikigai-module = "0.5.1"
 serde = { version = "1", features = ["derive"] }
 # The J2 session payload is postcard (R-D6). `use-std` on the host; the guest uses the same
 # crate with `alloc` (see `ikigai-runtime-guest`).
 postcard = { version = "1", default-features = false }
+# Core's `Endpoint`/`Space`/`Issuer` and ikigai-module's `ModuleTransport` are async-trait
+# traits; implementing them takes the same macro.
+async-trait = "0.1"
+# Channels and `join` for the host-call bridge (a jailed guest's kernel calls are served by
+# the invocation that is running it). `std` + `async-await` only; no thread pool.
+futures = { version = "0.3", default-features = false, features = ["std", "async-await", "executor"] }
 anyhow = "1"
 # Content-addressing for the loader's artifact atom (R-D7). blake3 is already in the graph
 # through ikigai-core and is wasm-clean (pure-Rust fallback on wasm32).
@@ -43,11 +59,29 @@ blake3 = "1"
 # and the fixture suite as its gate. wasmtime 50 makes `Config::async_support` a no-op, so the
 # core-module tier never calls it and runs fully synchronously.
 wasmtime = "50.0.0"
-# wasmtime-wasi carries the WASI p1 path (`p1` feature) the core-module tier's third convention
-# uses; it moves in lockstep with wasmtime's major. `default-features = false` here (not on the
-# member) so the member's `features = ["p1"]` takes only what the core-module tier needs — the
-# component-model WASI (p2/p3) arrives with the component tier in R3b.
+# wasmtime-wasi carries the WASI p1 path (`p1`, the core-module tier's third convention) and p2
+# (the component tier); it moves in lockstep with wasmtime's major. `default-features = false`
+# here (not on the member) so the member names exactly what it takes; p3 is the member's `p3`
+# feature, built on nightly until 2026-11-12 (R-D17).
 wasmtime-wasi = { version = "50.0.0", default-features = false }
+# wasmtime-wasi-http moves with wasmtime's major too. `default-features = false` drops
+# `default-send-request` (wasmtime's own HTTP client, R-D5 rules it out) and p3.
+wasmtime-wasi-http = { version = "50.0.0", default-features = false }
+# The HTTP method table `wasi:http` requests are mapped through (`Method::{iri, verb}`), so
+# the runtime and ikigai-http cannot disagree. 0.4.0 is the release on ikigai-core 0.2.0;
+# `<0.5.0` (rule 5).
+ikigai-http = "0.4.0"
+# The seeded RNG of the deterministic WASI context. 0.10 is the line wasmtime-wasi 50 links.
+rand = { version = "0.10", default-features = false, features = ["std_rng"] }
+serde_json = "1"
+# The types `wasi:http`'s send hook speaks (all already in wasmtime-wasi-http's graph).
+http = "1"
+http-body-util = "0.1"
+bytes = "1"
+# The tests' executor (dev-only): wasmtime's async calls run on any executor.
+tokio = { version = "1", default-features = false }
 # wit-parser is pinned to the version the pinned wasmtime uses (both 0.261 → wasmparser 0.261),
-# so the WIT lift and wasmtime read one wasmparser (R-D14, R-D17).
+# so the WIT lift and wasmtime read one wasmparser (R-D14, R-D17). The host reads a component's
+# WIT docs with it. (The guest SDK's wit-bindgen 0.63 reads 0.262; that is a guest-side build
+# dependency and never links into a host binary.)
 wit-parser = "0.261.0"

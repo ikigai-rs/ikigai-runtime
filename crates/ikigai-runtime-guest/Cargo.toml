@@ -7,13 +7,23 @@ license.workspace = true
 authors.workspace = true
 repository.workspace = true
 homepage.workspace = true
-description = "The Rust guest SDK for ikigai modules. R3: the core-module (ikigai-module ABI v1) guest ABI — alloc/free/invoke and the synchronous host_call pump. The wit-bindgen component SDK (the `endpoint`/`app` worlds) lands in R3b."
+description = "The Rust guest SDK for ikigai modules: the core-module (ikigai-module ABI v1) guest ABI on ikigai-module-abi's wire types (alloc/free/invoke and the synchronous host_call pump), and the wit-bindgen component SDK for the ikigai:runtime `endpoint` world."
 keywords = ["ikigai", "wasm", "guest", "abi", "webassembly"]
 categories = ["wasm", "api-bindings"]
 
 [dependencies]
+# The ABI's packing and export names, and (re-exported from it) ikigai-module-abi's wire types.
+# Only `session` is used, so a guest links nothing of ikigai-core (LTO drops it).
 ikigai-runtime = { path = "../ikigai-runtime", version = "0.2.0" }
 postcard = { workspace = true, features = ["alloc"] }
+# For the guest's role-split reply encoder (`core_module::Reply`): postcard's serializer, at the
+# derived enum's variant indexes. `alloc` only, no derive.
+serde = { version = "1", default-features = false, features = ["alloc"] }
+# The component SDK's bindings for the `ikigai:runtime` WIT (R-D13). 0.63 is the release whose
+# wit-parser (0.262) uses the wasmparser already in this workspace's graph. Its `async` feature
+# (on by default) is off: the SDK's exports and the `kernel` import are synchronous p2
+# functions, and the guest SDK says so (R-D13: "the guest SDK states which mode it uses").
+wit-bindgen = { version = "0.63.0", default-features = false, features = ["macros", "realloc", "std", "macro-string"] }
 
 [dev-dependencies]
 postcard = { workspace = true, features = ["use-std"] }

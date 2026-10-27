@@ -8,17 +8,8 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use ikigai_runtime::space::Convention;
-use ikigai_runtime::{
-    Call, Capability, CoreEngine, Deadline, Error, HostResolver, Limits, Output, Value,
-};
+use ikigai_runtime::{Call, CoreEngine, Deadline, Error, Limits, NoHost, Output, Value};
 use ikigai_runtime_wasmtime::{detect_convention, WasmtimeCoreEngine};
-
-struct NoHost;
-impl HostResolver for NoHost {
-    fn source(&self, _iri: &str, _cap: &Capability) -> Result<Vec<u8>, Error> {
-        Err(Error::NotFound("this test has no host".into()))
-    }
-}
 
 const ADD: &str = r#"(module (func (export "add") (param i32 i32) (result i32) local.get 0 local.get 1 i32.add))"#;
 const SPIN: &str = r#"(module (func (export "spin") (loop $l (br $l))))"#;
@@ -29,16 +20,16 @@ fn engine() -> WasmtimeCoreEngine {
     WasmtimeCoreEngine::new(Limits::fuel(u64::MAX)).expect("a bounded ceiling")
 }
 
-#[test]
-fn an_unbounded_ceiling_is_refused_so_the_runtime_will_not_start() {
+#[tokio::test]
+async fn an_unbounded_ceiling_is_refused_so_the_runtime_will_not_start() {
     assert!(matches!(
         WasmtimeCoreEngine::new(Limits::unbounded()),
         Err(ikigai_runtime::EngineError::Unbounded)
     ));
 }
 
-#[test]
-fn the_numeric_convention_calls_a_numeric_export() {
+#[tokio::test]
+async fn the_numeric_convention_calls_a_numeric_export() {
     let engine = engine();
     let compiled = engine.compile(ADD.as_bytes()).unwrap();
     assert_eq!(detect_convention(&compiled), Convention::Numeric);
@@ -52,6 +43,7 @@ fn the_numeric_convention_calls_a_numeric_export() {
             &Limits::fuel(1_000_000),
             Arc::new(NoHost),
         )
+        .await
         .unwrap();
     match out.output {
         Output::Numeric(vals) => assert_eq!(vals, vec![Value::I32(42)]),
@@ -60,8 +52,8 @@ fn the_numeric_convention_calls_a_numeric_export() {
     assert!(out.consumed.fuel.is_some(), "fuel consumption is recorded");
 }
 
-#[test]
-fn fuel_exhaustion_is_over_budget_never_transient() {
+#[tokio::test]
+async fn fuel_exhaustion_is_over_budget_never_transient() {
     let engine = engine();
     let compiled = engine.compile(SPIN.as_bytes()).unwrap();
     let err = engine
@@ -74,12 +66,13 @@ fn fuel_exhaustion_is_over_budget_never_transient() {
             &Limits::fuel(100_000),
             Arc::new(NoHost),
         )
+        .await
         .unwrap_err();
     assert!(matches!(err, Error::OverBudget { .. }), "got {err:?}");
 }
 
-#[test]
-fn a_host_imposed_deadline_is_a_timeout() {
+#[tokio::test]
+async fn a_host_imposed_deadline_is_a_timeout() {
     let engine = engine();
     let compiled = engine.compile(SPIN.as_bytes()).unwrap();
     // Huge fuel, so only the epoch deadline ends the spin; a HOST deadline → Timeout.
@@ -94,12 +87,13 @@ fn a_host_imposed_deadline_is_a_timeout() {
             &limits,
             Arc::new(NoHost),
         )
+        .await
         .unwrap_err();
     assert!(matches!(err, Error::Timeout(_)), "got {err:?}");
 }
 
-#[test]
-fn a_caller_budget_deadline_is_over_budget() {
+#[tokio::test]
+async fn a_caller_budget_deadline_is_over_budget() {
     let engine = engine();
     let compiled = engine.compile(SPIN.as_bytes()).unwrap();
     // A BUDGET deadline → OverBudget, never transient.
@@ -114,12 +108,13 @@ fn a_caller_budget_deadline_is_over_budget() {
             &limits,
             Arc::new(NoHost),
         )
+        .await
         .unwrap_err();
     assert!(matches!(err, Error::OverBudget { .. }), "got {err:?}");
 }
 
-#[test]
-fn the_host_survives_a_trapped_run_and_answers_the_next() {
+#[tokio::test]
+async fn the_host_survives_a_trapped_run_and_answers_the_next() {
     let engine = engine();
     let spin = engine.compile(SPIN.as_bytes()).unwrap();
     let add = engine.compile(ADD.as_bytes()).unwrap();
@@ -134,6 +129,7 @@ fn the_host_survives_a_trapped_run_and_answers_the_next() {
             &Limits::fuel(50_000),
             Arc::new(NoHost)
         )
+        .await
         .is_err());
     // ...then the next request on the same engine resolves normally (containment).
     let out = engine
@@ -146,6 +142,7 @@ fn the_host_survives_a_trapped_run_and_answers_the_next() {
             &Limits::fuel(1_000_000),
             Arc::new(NoHost),
         )
+        .await
         .unwrap();
     match out.output {
         Output::Numeric(vals) => assert_eq!(vals, vec![Value::I32(3)]),

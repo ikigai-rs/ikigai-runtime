@@ -23,52 +23,48 @@ fn main() {
     let out_dir = PathBuf::from(env::var("OUT_DIR").unwrap());
     let cargo = env::var("CARGO").unwrap_or_else(|_| "cargo".to_string());
 
-    build_guest(
-        &cargo,
-        &fixtures.join("jail-guest").join("Cargo.toml"),
-        "wasm32-unknown-unknown",
-        "jail_guest.wasm",
-        &out_dir,
-    );
-    build_guest(
-        &cargo,
-        &fixtures.join("p1-cmd").join("Cargo.toml"),
-        "wasm32-wasip1",
-        "p1cmd.wasm",
-        &out_dir,
-    );
-
-    println!(
-        "cargo:rerun-if-changed={}",
-        fixtures
-            .join("jail-guest")
-            .join("src")
-            .join("lib.rs")
-            .display()
-    );
-    println!(
-        "cargo:rerun-if-changed={}",
-        fixtures
-            .join("p1-cmd")
-            .join("src")
-            .join("main.rs")
-            .display()
-    );
+    // (fixture directory, target, built artifact). The components are wasm32-wasip2 cdylibs,
+    // which the target's linker (wasm-component-ld) emits as components.
+    const FIXTURES: &[(&str, &str, &str)] = &[
+        ("jail-guest", "wasm32-unknown-unknown", "jail_guest.wasm"),
+        ("p1-cmd", "wasm32-wasip1", "p1cmd.wasm"),
+        ("comp-endpoint", "wasm32-wasip2", "comp_endpoint.wasm"),
+        ("comp-calc", "wasm32-wasip2", "comp_calc.wasm"),
+        ("comp-probe", "wasm32-wasip2", "comp_probe.wasm"),
+    ];
+    for (dir, target, artifact) in FIXTURES {
+        let fixture = fixtures.join(dir);
+        build_guest(
+            &cargo,
+            &fixture.join("Cargo.toml"),
+            target,
+            artifact,
+            &out_dir,
+        );
+        println!("cargo:rerun-if-changed={}", fixture.join("src").display());
+        println!(
+            "cargo:rerun-if-changed={}",
+            fixture.join("Cargo.toml").display()
+        );
+        if fixture.join("wit").exists() {
+            println!("cargo:rerun-if-changed={}", fixture.join("wit").display());
+        }
+    }
     // Rebuild if the guest-shared crates change.
+    for shared in ["ikigai-runtime-guest", "ikigai-runtime"] {
+        let crate_dir = manifest_dir.join("..").join(shared);
+        println!("cargo:rerun-if-changed={}", crate_dir.join("src").display());
+        println!(
+            "cargo:rerun-if-changed={}",
+            crate_dir.join("Cargo.toml").display()
+        );
+    }
     println!(
         "cargo:rerun-if-changed={}",
         manifest_dir
             .join("..")
             .join("ikigai-runtime-guest")
-            .join("src")
-            .display()
-    );
-    println!(
-        "cargo:rerun-if-changed={}",
-        manifest_dir
-            .join("..")
-            .join("ikigai-runtime")
-            .join("src")
+            .join("wit")
             .display()
     );
 }

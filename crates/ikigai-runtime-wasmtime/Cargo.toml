@@ -7,25 +7,58 @@ license.workspace = true
 authors.workspace = true
 repository.workspace = true
 homepage.workspace = true
-description = "The wasmtime implementation of the ikigai runtime's core-module tier (R-D1, R-D6): three calling conventions (numeric signatures, the ikigai-module ABI v1, and WASI p1 command modules), a fresh Store per session, fuel/epoch/memory budgets from Limits, host_call clamped to the session's capability, and the R-D10 error mapping."
+description = "The wasmtime implementation of the ikigai runtime: the core-module tier (numeric signatures, the ikigai-module ABI v1, WASI p1 command modules) and the component tier (the `endpoint` and `app` worlds, WIT exports projected as ikigai endpoints, imports bound to kernel requests), each run in a fresh Store under budgets from Limits, with every guest request held to the session's capability."
 keywords = ["ikigai", "wasm", "wasmtime", "jail", "webassembly"]
 categories = ["wasm"]
+# The WIT the component tier's host bindings are generated from. A copy of
+# `ikigai-runtime-wit/wit`, checked identical by `tests/wit_copy.rs`, because a published crate
+# cannot reach outside its own directory and `bindgen!` reads files at compile time.
+include = ["src/**/*.rs", "build.rs", "wit/**/*.wit", "README.md", "../../LICENSE-*"]
 
 [dependencies]
 ikigai-runtime = { path = "../ikigai-runtime", version = "0.2.0" }
 ikigai-core = { workspace = true }
+# The host keeps ikigai-module's typed session (R-D6 as amended): the jail is mounted through
+# its `ModuleTransport`/`ModuleSpace`, and a guest's bytes are converted to its types here.
+ikigai-module = { workspace = true }
 wasmtime = { workspace = true }
-# The WASI p1 path for the third calling convention (command modules). `p1` is the only feature
-# this tier needs; the component-model (p2/p3) WASI arrives with the component tier in R3b.
-wasmtime-wasi = { workspace = true, features = ["p1"] }
+# WASI: `p1` for the core-module tier's third convention, `p2` for the component tier. p3 is
+# behind this crate's `p3` feature (R-D17: nightly and non-blocking until 2026-11-12).
+wasmtime-wasi = { workspace = true, features = ["p1", "p2"] }
+# `wasi:http` for components, routed to the kernel's `urn:http:*` (R-D5). `p2` only: no
+# `default-send-request`, so wasmtime's own HTTP client is not even compiled in — the one way
+# out is the kernel, under the caller's capability.
+wasmtime-wasi-http = { workspace = true, features = ["p2"] }
+# The method table (`Method::{iri, verb}`) a `wasi:http` request is mapped through, so the
+# runtime and ikigai-http cannot disagree about which IRI and verb a method is.
+ikigai-http = { workspace = true }
 postcard = { workspace = true, features = ["use-std"] }
+async-trait = { workspace = true }
+futures = { workspace = true }
+# A seeded CSPRNG for the deterministic WASI context (R-D3: without `random:secure` the guest's
+# randomness is seeded from the artifact and input digests). 0.10 is the line wasmtime-wasi 50
+# already links, so this adds no second copy; `<0.11.0` (rule 5).
+rand = { workspace = true }
+blake3 = { workspace = true }
+serde_json = { workspace = true }
+# The WIT docs a component carries (the `package-docs` section), for a projected endpoint's
+# summary (R-D4, R-D14): wit-parser's own decoder, pinned to the version wasmtime 50 links.
+wit-parser = { workspace = true, features = ["decoding"] }
+# The response and request types `wasi:http`'s hook speaks.
+http = { workspace = true }
+http-body-util = { workspace = true }
+bytes = { workspace = true }
 
 [features]
-# The guest-fixture end-to-end tests (`tests/jail.rs`, `tests/wasi_p1.rs`). The build script
-# compiles the wasm32 guest fixtures only under this feature; the dedicated `jail-fixtures` CI
-# job enables it (9c: a feature-gated target gets a job that enables it). The default build
-# (and the numeric always-on test) needs no wasm toolchain.
+# The guest-fixture end-to-end tests (`tests/jail.rs`, `tests/wasi_p1.rs`, `tests/component*.rs`,
+# `tests/probe.rs`). The build script compiles the wasm guest fixtures only under this feature;
+# the dedicated `jail-fixtures` CI job enables it (9c: a feature-gated target gets a job that
+# enables it). The default build (and the always-on WAT tests) needs no wasm toolchain.
 jail-fixtures = []
+# WASI p3 (R-D17): built on nightly in the non-blocking job until Rust 1.100.0 ships on
+# 2026-11-12. Nothing in the tier depends on it yet; the feature keeps the build honest.
+p3 = ["wasmtime-wasi/p3"]
 
 [dev-dependencies]
 postcard = { workspace = true, features = ["use-std"] }
+tokio = { workspace = true, features = ["rt", "macros"] }

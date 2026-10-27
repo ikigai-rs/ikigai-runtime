@@ -1,0 +1,20 @@
+# A component guest of the `ikigai:runtime` `endpoint` world, written with the guest SDK's
+# component bindings (R-D13). Built for wasm32-wasip2 by `ikigai-runtime-wasmtime`'s build.rs
+# under the `jail-fixtures` feature; exercised by `tests/component.rs`. Its own workspace.
+[package]
+name = "comp-endpoint"
+version = "0.0.0"
+edition = "2021"
+publish = false
+
+[workspace]
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+ikigai-runtime-guest = { path = "../../crates/ikigai-runtime-guest" }
+
+[profile.release]
+opt-level = "s"
+lto = true

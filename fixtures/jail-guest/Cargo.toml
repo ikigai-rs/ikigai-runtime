@@ -13,9 +13,7 @@ publish = false
 crate-type = ["cdylib"]
 
 [dependencies]
-ikigai-runtime = { path = "../../crates/ikigai-runtime" }
 ikigai-runtime-guest = { path = "../../crates/ikigai-runtime-guest" }
-postcard = { version = "1", features = ["alloc"] }
 
 [profile.release]
 opt-level = "s"

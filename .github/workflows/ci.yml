@@ -18,10 +18,10 @@ jobs:
       wasm-lib: true
       wasm-packages: ikigai-runtime
 
-  # The guest-fixture end-to-end tests (the ABI v1 session and the WASI p1 path), behind the
-  # `jail-fixtures` feature. Its own job because the fixtures are built for wasm32 by the build
-  # script, so the wasm targets must be installed (9c: a feature-gated path gets a job that
-  # enables it; unconditional, never path-filtered).
+  # The guest-fixture end-to-end tests (the ABI v1 session, the WASI p1 path, the component tier
+  # and R1's probe table), behind the `jail-fixtures` feature. Its own job because the fixtures
+  # are built for wasm32 by the build script, so the wasm targets must be installed (9c: a
+  # feature-gated path gets a job that enables it; unconditional, never path-filtered).
   jail-fixtures:
     name: jail-fixtures (wasm)
     runs-on: ubuntu-latest
@@ -29,7 +29,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
         with:
-          targets: wasm32-unknown-unknown, wasm32-wasip1
+          targets: wasm32-unknown-unknown, wasm32-wasip1, wasm32-wasip2
           components: clippy
       - uses: Swatinem/rust-cache@v2
       - name: clippy (jail-fixtures)
@@ -38,9 +38,9 @@ jobs:
         run: cargo test -p ikigai-runtime-wasmtime --features jail-fixtures
 
   # p3 tripwire (R-D17): p3 is built on nightly in a labeled, NON-BLOCKING job until Rust 1.100.0
-  # ships on 2026-11-12, after which p3 moves to the blocking stable jobs. R3a carries no p3 code
-  # yet (the component tier is R3b), so this is a build tripwire that nightly still compiles the
-  # workspace; it never gates a merge.
+  # ships on 2026-11-12, after which p3 moves to the blocking stable jobs. The component tier
+  # carries no p3 code path yet (its async exports are skipped and reported), so this builds the
+  # workspace with wasmtime-wasi's p3 linked in as a tripwire; it never gates a merge.
   p3-nightly:
     name: p3 nightly (non-blocking)
     runs-on: ubuntu-latest
@@ -49,4 +49,4 @@ jobs:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@nightly
       - uses: Swatinem/rust-cache@v2
-      - run: cargo build --workspace
+      - run: cargo build --workspace --features ikigai-runtime-wasmtime/p3

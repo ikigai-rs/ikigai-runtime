@@ -133,6 +133,35 @@ impl Artifact {
     }
 }
 
+/// The atom an artifact is named by: `urn:runtime:artifact:{digest}` (R-D7).
+pub fn artifact_iri(digest: &ArtifactDigest) -> String {
+    format!("urn:runtime:artifact:{}", digest.as_str())
+}
+
+/// Load an artifact BY DIGEST through the kernel (R-D7): Source `urn:runtime:artifact:{digest}`
+/// under `capability`, then check the bytes hash to the digest they were asked for. Whoever
+/// serves the atom (a store, a peer, a bundle's host) is not trusted for the bytes: a mismatch
+/// is `InvalidArgument`, and nothing is compiled from it.
+pub async fn load_artifact(
+    host: &dyn crate::HostResolver,
+    digest: &ArtifactDigest,
+    capability: &ikigai_core::Capability,
+) -> Result<Artifact, ikigai_core::Error> {
+    use ikigai_core::{Error, Iri, Request, Verb};
+    let iri = artifact_iri(digest);
+    let target = Iri::parse(iri.as_str()).map_err(|e| Error::InvalidArgument {
+        name: "digest".into(),
+        detail: format!("{iri}: {e}"),
+    })?;
+    let representation = host
+        .resolve(Request::new(Verb::Source, target), capability)
+        .await?;
+    Artifact::sink(digest.clone(), representation.bytes).map_err(|e| Error::InvalidArgument {
+        name: "digest".into(),
+        detail: e.to_string(),
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -158,5 +187,43 @@ mod tests {
         let k = a.compiled_key(&EngineCompatHash::new("wasmtime-50-aarch64"));
         assert_eq!(k.digest, *a.digest());
         assert_eq!(k.engine.as_str(), "wasmtime-50-aarch64");
+    }
+
+    struct Atoms(Vec<u8>);
+
+    impl crate::HostResolver for Atoms {
+        fn resolve<'a>(
+            &'a self,
+            request: ikigai_core::Request,
+            _capability: &'a ikigai_core::Capability,
+        ) -> crate::HostFuture<'a> {
+            let bytes = self.0.clone();
+            Box::pin(async move {
+                assert!(request
+                    .target
+                    .as_str()
+                    .starts_with("urn:runtime:artifact:blake3:"));
+                Ok(ikigai_core::Representation::new(
+                    ikigai_core::ReprType::new("application/wasm"),
+                    bytes,
+                ))
+            })
+        }
+    }
+
+    #[test]
+    fn an_artifact_loads_by_digest_and_its_bytes_are_checked() {
+        use futures::executor::block_on;
+        let bytes = b"\0asm\x01\0\0\0".to_vec();
+        let digest = ArtifactDigest::of(&bytes);
+        let root = ikigai_core::Capability::root();
+        let loaded = block_on(load_artifact(&Atoms(bytes), &digest, &root)).unwrap();
+        assert_eq!(loaded.digest(), &digest);
+        // A server answering other bytes under the name is refused, never compiled.
+        let refused = block_on(load_artifact(&Atoms(b"other".to_vec()), &digest, &root));
+        assert!(matches!(
+            refused,
+            Err(ikigai_core::Error::InvalidArgument { .. })
+        ));
     }
 }

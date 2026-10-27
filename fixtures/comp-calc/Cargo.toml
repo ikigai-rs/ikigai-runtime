@@ -1,0 +1,20 @@
+# A "stock" component (R-D4, the book's chapter 4): its own WIT world, nothing ikigai-specific,
+# projected as ikigai endpoints by the runtime and with its one import bound by configuration.
+# Built for wasm32-wasip2 by `ikigai-runtime-wasmtime`'s build.rs under `jail-fixtures`.
+[package]
+name = "comp-calc"
+version = "0.0.0"
+edition = "2021"
+publish = false
+
+[workspace]
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+wit-bindgen = { version = "0.63.0", default-features = false, features = ["macros", "realloc", "std"] }
+
+[profile.release]
+opt-level = "s"
+lto = true

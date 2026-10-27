@@ -1,12 +1,138 @@
 //! The core-module (ikigai-module ABI v1) guest ABI (R-D6, "J2 absorbed").
 //!
 //! A guest declares its exports with [`ikigai_module!`](crate::ikigai_module), passing a dispatch
-//! function. The SDK
-//! handles the `u64` packing, the guest allocator the host writes through, and the synchronous
-//! `host_call` pump. The payload is the postcard [`ModuleCall`]/[`ModuleReply`] session defined in
-//! `ikigai-runtime` (so host, guest and fixtures share one definition).
+//! function `fn(AbiModuleCall) -> Reply`. The SDK handles the `u64` packing, the guest allocator
+//! the host writes through, and the synchronous `host_call` pump. The payload is ikigai-module's
+//! session, built from the wire-only mirrors in `ikigai-module-abi` (re-exported as [`abi`](crate::abi)): a
+//! guest links the session and nothing of ikigai-core.
+//!
+//! ## Why a guest replies with [`Reply`], not `AbiModuleReply`
+//!
+//! [`Reply`] is the guest's ROLE of `AbiModuleReply`: the seven answers a guest gives, without
+//! `HostCall`, which is a request and never a final answer (a host refuses one in that place).
+//! The type says so at compile time. Each variant is encoded at **its `AbiModuleReply` index**
+//! through postcard's own serializer, so the bytes are identical (`tests` below compare every
+//! variant against the derived encoding) and nothing of the wire is re-implemented. `HostCall`
+//! is the SDK's own business (`host_call`, wasm32 only).
+//!
+//! It is NOT a size lever, measured at R3b (stripped, release, opt-level `s`, a guest that
+//! makes a host call, echoes an argument and answers `Describe`): the derived encoder 47,138
+//! bytes, this one 46,997, and a split down to the four invocation-time answers 43,262. The
+//! weight the abi session adds over R3a's subset (31,138) is the DECODE of a real session: the
+//! request's argument map, the representation's type parameters and the typed errors, in
+//! `ikigai-module-abi`'s derived `Deserialize` and serde's visitors.
 
-use ikigai_runtime::session::{pack, ModuleCall, ModuleReply};
+use crate::abi::{
+    AbiCapability, AbiModuleCall, AbiModuleCard, AbiModuleError, AbiModuleManifest, AbiModuleReply,
+    AbiRepresentation, AbiRequest, AbiSpaceEntry, AbiVerb,
+};
+use alloc::boxed::Box;
+use alloc::string::{String, ToString};
+use alloc::vec;
+use alloc::vec::Vec;
+use ikigai_runtime::session::pack;
+use serde::ser::{Serialize, SerializeStructVariant, Serializer};
+
+/// The name serde gives the enum on the wire. postcard writes only the variant INDEX, so this is
+/// documentation; the index is the contract.
+const REPLY: &str = "AbiModuleReply";
+
+/// What a guest answers a call with: the guest's role of `AbiModuleReply`, encoded at the same
+/// variant indexes (see the module docs).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Reply {
+    /// The invocation finished with a representation that declares no golden thread.
+    /// `AbiModuleReply::Resolved`, index 1.
+    Resolved(AbiRepresentation),
+    /// The invocation failed with an endpoint error. `AbiModuleReply::Error`, index 2.
+    Error(String),
+    /// The answer to `Describe`: the guest's bound entries, or `None` when it cannot enumerate
+    /// them. `AbiModuleReply::Bindings`, index 3.
+    Bindings(Option<Vec<AbiSpaceEntry>>),
+    /// The answer to `Manifest`: the guest's bindings and how it rewrites names.
+    /// `AbiModuleReply::Manifest`, index 4.
+    Manifest(AbiModuleManifest),
+    /// The invocation failed, and the failure keeps its type. `AbiModuleReply::ErrorTyped`,
+    /// index 5.
+    ErrorTyped(AbiModuleError),
+    /// The invocation finished with a representation and the golden threads its endpoint
+    /// declared. `AbiModuleReply::ResolvedThreaded`, index 6.
+    ResolvedThreaded {
+        /// The result.
+        representation: AbiRepresentation,
+        /// The names of the threads the endpoint declared on it.
+        threads: Vec<String>,
+    },
+    /// The answer to `Cards`: each bound entry with its description as JSON text (the guest
+    /// holds that text; it links no JSON code). `AbiModuleReply::Cards`, index 7.
+    Cards(Vec<AbiModuleCard>),
+}
+
+impl Serialize for Reply {
+    fn serialize<S: Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
+        match self {
+            Reply::Resolved(r) => s.serialize_newtype_variant(REPLY, 1, "Resolved", r),
+            Reply::Error(m) => s.serialize_newtype_variant(REPLY, 2, "Error", m),
+            Reply::Bindings(b) => s.serialize_newtype_variant(REPLY, 3, "Bindings", b),
+            Reply::Manifest(m) => s.serialize_newtype_variant(REPLY, 4, "Manifest", m),
+            Reply::ErrorTyped(e) => s.serialize_newtype_variant(REPLY, 5, "ErrorTyped", e),
+            Reply::ResolvedThreaded {
+                representation,
+                threads,
+            } => {
+                let mut v = s.serialize_struct_variant(REPLY, 6, "ResolvedThreaded", 2)?;
+                v.serialize_field("representation", representation)?;
+                v.serialize_field("threads", threads)?;
+                v.end()
+            }
+            Reply::Cards(c) => s.serialize_newtype_variant(REPLY, 7, "Cards", c),
+        }
+    }
+}
+
+impl From<Reply> for AbiModuleReply {
+    fn from(reply: Reply) -> Self {
+        match reply {
+            Reply::Resolved(r) => AbiModuleReply::Resolved(r),
+            Reply::Error(m) => AbiModuleReply::Error(m),
+            Reply::Bindings(b) => AbiModuleReply::Bindings(b),
+            Reply::Manifest(m) => AbiModuleReply::Manifest(m),
+            Reply::ErrorTyped(e) => AbiModuleReply::ErrorTyped(e),
+            Reply::ResolvedThreaded {
+                representation,
+                threads,
+            } => AbiModuleReply::ResolvedThreaded {
+                representation,
+                threads,
+            },
+            Reply::Cards(c) => AbiModuleReply::Cards(c),
+        }
+    }
+}
+
+/// A `HostCall` as the guest writes it: `AbiModuleReply::HostCall`, index 0, borrowed.
+struct HostCall<'a> {
+    request: &'a AbiRequest,
+    capability: &'a AbiCapability,
+}
+
+impl Serialize for HostCall<'_> {
+    fn serialize<S: Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
+        let mut v = s.serialize_struct_variant(REPLY, 0, "HostCall", 2)?;
+        v.serialize_field("request", self.request)?;
+        v.serialize_field("capability", self.capability)?;
+        v.end()
+    }
+}
+
+/// Encode a `HostCall` as the session carries it (`AbiModuleReply::HostCall`, index 0).
+pub fn encode_host_call(request: &AbiRequest, capability: &AbiCapability) -> Vec<u8> {
+    postcard::to_allocvec(&HostCall {
+        request,
+        capability,
+    })
+    .unwrap_or_default()
+}
 
 /// Allocate `len` bytes the host will write through (`ikigai_alloc`). The buffer has capacity
 /// exactly `len`, so [`dealloc`] with the same `len` frees it soundly.
@@ -17,7 +143,7 @@ pub fn alloc(len: usize) -> *mut u8 {
     ptr
 }
 
-/// Free a buffer allocated by [`alloc`] (or handed back by the host as a `host_call` result).
+/// Free a buffer allocated by [`alloc()`] (or handed back by the host as a `host_call` result).
 ///
 /// # Safety
 /// `ptr`/`len` must name a buffer this allocator produced and not yet freed.
@@ -48,22 +174,32 @@ pub fn leak_bytes(bytes: Vec<u8>) -> u64 {
     pack(ptr, len)
 }
 
-/// Decode a `ModuleCall`, dispatch it, and encode the `ModuleReply`. Pure and testable without a
-/// wasm target — [`run_invoke`] is only the pointer glue over this.
-pub fn process(call_bytes: &[u8], dispatch: fn(ModuleCall) -> ModuleReply) -> Vec<u8> {
-    let reply = match postcard::from_bytes::<ModuleCall>(call_bytes) {
+/// Encode a reply as the session carries it.
+pub fn encode_reply(reply: &Reply) -> Vec<u8> {
+    postcard::to_allocvec(reply).unwrap_or_default()
+}
+
+/// Decode a call, dispatch it, and encode the reply. Pure and testable without a wasm target —
+/// [`run_invoke`] is only the pointer glue over this. A call a guest should never receive (a
+/// `HostResult` or `HostError` outside a `host_call`) is answered as an endpoint error, and so
+/// is one it cannot decode.
+pub fn process(call_bytes: &[u8], dispatch: fn(AbiModuleCall) -> Reply) -> Vec<u8> {
+    let reply = match AbiModuleCall::decode(call_bytes) {
+        Ok(AbiModuleCall::HostResult(_) | AbiModuleCall::HostError(_)) => {
+            Reply::Error("guest received a host answer outside a host_call".to_string())
+        }
         Ok(call) => dispatch(call),
-        Err(e) => ModuleReply::Error(format!("decode: {e}")),
+        Err(e) => Reply::Error(alloc::format!("decode: {e}")),
     };
-    postcard::to_allocvec(&reply).unwrap_or_default()
+    encode_reply(&reply)
 }
 
 /// The body of the `ikigai_invoke` export: read the call the host wrote, dispatch it, and hand
 /// the reply back as the packed `u64`.
 ///
 /// # Safety
-/// `ptr`/`len` must name a buffer the host wrote with [`alloc`].
-pub unsafe fn run_invoke(ptr: u32, len: u32, dispatch: fn(ModuleCall) -> ModuleReply) -> u64 {
+/// `ptr`/`len` must name a buffer the host wrote with [`alloc()`].
+pub unsafe fn run_invoke(ptr: u32, len: u32, dispatch: fn(AbiModuleCall) -> Reply) -> u64 {
     let call_bytes = take_bytes(ptr as *mut u8, len as usize);
     leak_bytes(process(&call_bytes, dispatch))
 }
@@ -78,35 +214,68 @@ mod imported {
     }
 }
 
-/// Source a resource through the host, mid-session, under `capability` (the host clamps it to the
-/// session's). Synchronous: `host_call` returns when the host has resolved — a pending future
-/// inside the guest is a design error, not a wait.
+/// Make a request of the kernel through the host, mid-session, claiming `capability`.
+/// Synchronous: `host_call` returns when the host has resolved — a pending future inside the
+/// guest is a design error, not a wait.
+///
+/// ★ The capability is a CLAIM: the host holds the call to the capability of the session this
+/// guest was invoked under, so claiming more than that gains nothing (ledger #83). Pass the
+/// session's own capability (from the `Invoke`), or a narrower one.
+///
+/// A failure keeps its type: a host that answers `HostResult(Err(text))` (an endpoint error)
+/// arrives as [`AbiModuleError::Endpoint`].
 #[cfg(target_arch = "wasm32")]
-pub fn host_source(iri: &str, capability: &ikigai_runtime::Capability) -> Result<Vec<u8>, String> {
-    let reply = ModuleReply::HostCall {
-        iri: iri.to_string(),
-        capability: capability.clone(),
-    };
-    let request = postcard::to_allocvec(&reply).map_err(|e| e.to_string())?;
-    let (ptr, len) = leak_parts(request);
+pub fn host_call(
+    request: &AbiRequest,
+    capability: &AbiCapability,
+) -> Result<AbiRepresentation, AbiModuleError> {
+    let (ptr, len) = leak_parts(encode_host_call(request, capability));
     // SAFETY: the buffer is live for the duration of the call; the host reads it and returns a
     // result buffer it allocated through our `ikigai_alloc`.
     let packed = unsafe { imported::host_call(ptr, len) };
     unsafe { dealloc(ptr as *mut u8, len as usize) };
     let (rptr, rlen) = ikigai_runtime::session::unpack(packed);
-    let result = unsafe { take_bytes(rptr as *mut u8, rlen as usize) };
-    match postcard::from_bytes::<ModuleCall>(&result).map_err(|e| e.to_string())? {
-        ModuleCall::HostResult(r) => r,
-        other => Err(format!("host returned {other:?}, expected HostResult")),
+    let answer = unsafe { take_bytes(rptr as *mut u8, rlen as usize) };
+    answer_from(&answer)
+}
+
+/// What the host's answer to a `host_call` means: the representation, or the failure with its
+/// type.
+pub fn answer_from(answer: &[u8]) -> Result<AbiRepresentation, AbiModuleError> {
+    match AbiModuleCall::decode(answer) {
+        Ok(AbiModuleCall::HostResult(Ok(representation))) => Ok(representation),
+        Ok(AbiModuleCall::HostResult(Err(message))) => Err(AbiModuleError::Endpoint(message)),
+        Ok(AbiModuleCall::HostError(error)) => Err(error),
+        Ok(_) => Err(AbiModuleError::Endpoint(
+            "host answered a host_call with something other than a result".to_string(),
+        )),
+        Err(e) => Err(AbiModuleError::Endpoint(e.to_string())),
     }
 }
 
+/// `Source` a resource through the host (see `host_call`).
+#[cfg(target_arch = "wasm32")]
+pub fn host_source(
+    iri: &str,
+    capability: &AbiCapability,
+) -> Result<AbiRepresentation, AbiModuleError> {
+    host_call(&AbiRequest::new(AbiVerb::Source, iri), capability)
+}
+
+/// The request a `Source` of `iri` makes (for a native test of what `host_call` would send).
+pub fn source_request(iri: &str) -> AbiRequest {
+    AbiRequest::new(AbiVerb::Source, iri)
+}
+
 /// Declare a core module's ABI exports, wiring `ikigai_invoke` to a dispatch function
-/// `fn(ModuleCall) -> ModuleReply`.
+/// `fn(AbiModuleCall) -> Reply`.
 ///
 /// ```ignore
-/// use ikigai_runtime::session::{ModuleCall, ModuleReply};
-/// fn dispatch(call: ModuleCall) -> ModuleReply { ModuleReply::Resolved(b"hi".to_vec()) }
+/// use ikigai_runtime_guest::abi::{AbiModuleCall, AbiRepresentation};
+/// use ikigai_runtime_guest::core_module::Reply;
+/// fn dispatch(call: AbiModuleCall) -> Reply {
+///     Reply::Resolved(AbiRepresentation::new("text/plain", b"hi".to_vec()))
+/// }
 /// ikigai_runtime_guest::ikigai_module!(dispatch);
 /// ```
 #[macro_export]
@@ -134,33 +303,134 @@ macro_rules! ikigai_module {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::abi::{AbiExpiry, AbiModuleRewrite, AbiReprType, AbiSpaceEntry, AbiVerb as V};
 
-    fn echo(call: ModuleCall) -> ModuleReply {
+    fn representation() -> AbiRepresentation {
+        AbiRepresentation {
+            repr_type: AbiReprType {
+                media_type: "text/plain".into(),
+                params: [("charset".to_string(), "utf-8".to_string())].into(),
+            },
+            bytes: b"hello, world".to_vec(),
+            expiry: AbiExpiry::At(42),
+        }
+    }
+
+    fn entry() -> AbiSpaceEntry {
+        AbiSpaceEntry {
+            pattern: "urn:m:hello".into(),
+            endpoint: "hello".into(),
+            origin: None,
+        }
+    }
+
+    /// Every variant of [`Reply`] encodes to exactly the bytes the derived `AbiModuleReply`
+    /// encoder writes for the same value: the role split changes what a guest links, never
+    /// what it sends.
+    #[test]
+    fn every_reply_encodes_as_the_derived_abi_reply_does() {
+        let replies = vec![
+            Reply::Resolved(representation()),
+            Reply::Error("no such endpoint: urn:m:nope".into()),
+            Reply::Bindings(None),
+            Reply::Bindings(Some(vec![entry()])),
+            Reply::Manifest(AbiModuleManifest {
+                entries: Some(vec![entry()]),
+                rewrite: AbiModuleRewrite::None,
+            }),
+            Reply::ErrorTyped(AbiModuleError::InvalidArgument {
+                name: "x".into(),
+                detail: "bad".into(),
+            }),
+            Reply::ResolvedThreaded {
+                representation: representation(),
+                threads: vec!["urn:file:notes.txt".into()],
+            },
+            Reply::Cards(vec![AbiModuleCard {
+                entry: entry(),
+                description: r#"{"id":"hello"}"#.into(),
+            }]),
+        ];
+        for reply in replies {
+            let ours = encode_reply(&reply);
+            let derived = AbiModuleReply::from(reply.clone()).encode().unwrap();
+            assert_eq!(ours, derived, "{reply:?}");
+        }
+    }
+
+    #[test]
+    fn a_host_call_encodes_as_the_derived_abi_host_call_does() {
+        let request = AbiRequest::new(V::Meta, "urn:host:name");
+        let capability = AbiCapability::scoped(["urn:cap:host:read:name"]);
+        let ours = encode_host_call(&request, &capability);
+        let derived = AbiModuleReply::HostCall {
+            request,
+            capability,
+        }
+        .encode()
+        .unwrap();
+        assert_eq!(ours, derived);
+    }
+
+    fn echo(call: AbiModuleCall) -> Reply {
         match call {
-            ModuleCall::Invoke { body, .. } => ModuleReply::Resolved(body),
-            ModuleCall::Describe => ModuleReply::Describe("{}".into()),
-            ModuleCall::HostResult(_) => ModuleReply::Error("unexpected HostResult".into()),
+            AbiModuleCall::Invoke { request, .. } => Reply::Resolved(AbiRepresentation::new(
+                "text/plain",
+                request.target.into_bytes(),
+            )),
+            AbiModuleCall::Describe => Reply::Bindings(None),
+            _ => Reply::Error("unexpected".into()),
         }
     }
 
     #[test]
     fn process_decodes_dispatches_and_encodes() {
-        let call = ModuleCall::Invoke {
-            endpoint: "urn:jail:echo".into(),
-            body: b"payload".to_vec(),
-            capability: ikigai_runtime::Capability::root(),
+        let call = AbiModuleCall::Invoke {
+            request: source_request("urn:jail:echo"),
+            capability: AbiCapability::root(),
         };
-        let encoded = postcard::to_allocvec(&call).unwrap();
-        let out = process(&encoded, echo);
-        let reply: ModuleReply = postcard::from_bytes(&out).unwrap();
-        assert_eq!(reply, ModuleReply::Resolved(b"payload".to_vec()));
+        let out = process(&call.encode().unwrap(), echo);
+        let reply = AbiModuleReply::decode(&out).unwrap();
+        assert_eq!(
+            reply,
+            AbiModuleReply::Resolved(AbiRepresentation::new(
+                "text/plain",
+                b"urn:jail:echo".to_vec()
+            ))
+        );
     }
 
     #[test]
     fn process_reports_a_decode_failure_as_an_error_reply() {
         let out = process(b"\xff\xff not postcard", echo);
-        let reply: ModuleReply = postcard::from_bytes(&out).unwrap();
-        assert!(matches!(reply, ModuleReply::Error(_)));
+        assert!(matches!(
+            AbiModuleReply::decode(&out).unwrap(),
+            AbiModuleReply::Error(_)
+        ));
+    }
+
+    #[test]
+    fn a_host_answer_outside_a_host_call_is_refused() {
+        let call = AbiModuleCall::HostResult(Err("stray".into()));
+        let out = process(&call.encode().unwrap(), echo);
+        assert!(matches!(
+            AbiModuleReply::decode(&out).unwrap(),
+            AbiModuleReply::Error(_)
+        ));
+    }
+
+    #[test]
+    fn a_typed_host_failure_keeps_its_type() {
+        let denied = AbiModuleCall::HostError(AbiModuleError::Denied("urn:host:name".into()));
+        assert_eq!(
+            answer_from(&denied.encode().unwrap()),
+            Err(AbiModuleError::Denied("urn:host:name".into()))
+        );
+        let endpoint = AbiModuleCall::HostResult(Err("boom".into()));
+        assert_eq!(
+            answer_from(&endpoint.encode().unwrap()),
+            Err(AbiModuleError::Endpoint("boom".into()))
+        );
     }
 
     #[test]

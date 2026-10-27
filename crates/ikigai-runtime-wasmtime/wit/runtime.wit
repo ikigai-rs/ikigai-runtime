@@ -1,0 +1,83 @@
+// The `ikigai:runtime` WIT package (R-D2): the contract a component guest and the runtime's
+// component tier (ikigai-runtime-wasmtime) are both built against.
+//
+// `kernel` is imported by a guest: the five verbs on an IRI, named arguments as a list, and a
+// `representation` record or an `error` variant that mirrors ikigai-core's error classes. The
+// host resolves every call through the invocation's own context, under the guest's clamped
+// capability, so each import is a tracked dependency.
+//
+// `endpoint` is exported by a guest: `describe()` (the contract JSON the kernel already uses)
+// and `invoke(request)` — J2's `invoke`/`host_call` pair in typed form.
+//
+// World `endpoint` receives NO WASI AUTHORITY (R-D2, open question 7): a guest's WASI imports
+// are satisfied by an empty, deterministic context. World `app` adds the WASI a grant unlocks
+// (R-D3), built per call from the caller's grants clamped by the app's ceiling.
+package ikigai:runtime@0.1.0;
+
+interface kernel {
+  /// Bytes plus a media type — ikigai-core's universal representation.
+  record representation {
+    media-type: string,
+    bytes: list<u8>,
+  }
+
+  /// A refusal, mirroring ikigai-core's error classes.
+  variant error {
+    not-found(string),
+    unresolved(string),
+    denied(string),
+    invalid-argument(string),
+    conflict(string),
+    timeout(string),
+    over-budget(string),
+    endpoint(string),
+  }
+
+  /// A named argument: a name and its by-value bytes.
+  record arg {
+    name: string,
+    value: list<u8>,
+  }
+
+  /// Read.
+  source: func(iri: string, args: list<arg>) -> result<representation, error>;
+  /// Write.
+  sink: func(iri: string, args: list<arg>) -> result<representation, error>;
+  /// Does it resolve?
+  exists: func(iri: string, args: list<arg>) -> result<bool, error>;
+  /// Delete.
+  delete: func(iri: string, args: list<arg>) -> result<representation, error>;
+  /// Self-description.
+  meta: func(iri: string, args: list<arg>) -> result<representation, error>;
+}
+
+// The exported contract. Named `endpoint-api` rather than `endpoint`: WIT forbids a world and an
+// interface sharing a name in one package, and the record names both `endpoint` (R-D2). The two
+// WORLD names (`endpoint`, `app`) are kept as the record's headline pair; the interface takes the
+// `-api` suffix. (Reported to the hub as a WIT constraint the record did not anticipate.)
+interface endpoint-api {
+  use kernel.{representation, error, arg};
+
+  /// An invocation request: the endpoint and its named, by-value arguments.
+  record request {
+    endpoint: string,
+    args: list<arg>,
+  }
+
+  /// The contract JSON the kernel already uses.
+  describe: func() -> string;
+  /// Invoke an endpoint the guest serves.
+  invoke: func(req: request) -> result<representation, error>;
+}
+
+/// A guest that serves endpoints and may call the kernel — and receives no WASI authority.
+world endpoint {
+  import kernel;
+  export endpoint-api;
+}
+
+/// The `endpoint` world plus the WASI a grant unlocks (R-D3), built per call from the grants.
+world app {
+  import kernel;
+  export endpoint-api;
+}

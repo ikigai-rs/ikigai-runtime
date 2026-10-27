@@ -1,0 +1,4 @@
+# The module session's vectors are copied verbatim from ikigai-module (tests/vectors) and
+# compared byte for byte, so a CRLF checkout of one is drift. `eol=lf` on a path overrides
+# core.autocrlf (Git for Windows installs with it on). Ledger #1205.
+crates/ikigai-runtime/tests/vectors/* text eol=lf
