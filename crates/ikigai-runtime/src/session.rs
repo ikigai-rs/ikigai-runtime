@@ -2,14 +2,17 @@
 //! the `ikigai_invoke` / `host_call` boundary, and the `u64` packing the ABI returns.
 //!
 //! ABI v1, pinned here and by the doctest below:
-//! - the guest exports `ikigai_alloc(len) -> u32`, `ikigai_free(ptr, len)` and
-//!   `ikigai_invoke(ptr, len) -> u64`;
+//! - the guest exports [`EXPORT_ALLOC`]`(len) -> u32`, [`EXPORT_FREE`]`(ptr, len)` and
+//!   [`EXPORT_INVOKE`]`(ptr, len) -> u64`, and its linear memory as [`EXPORT_MEMORY`];
 //! - `ikigai_invoke` and `host_call` return one packed `u64` of `ptr << 32 | len` (see [`pack`]
-//!   and [`unpack`]) — one value, no multi-value return and no out-pointer, so a Java, Python or
+//!   and [`unpack`]): one value, no multi-value return and no out-pointer, so a Java, Python or
 //!   JavaScript host reads it with no helper;
-//! - the one import is `"ikigai" "host_call"(ptr, len) -> u64`;
-//! - the payload is a postcard-encoded [`ModuleCall`] (host → guest) or [`ModuleReply`]
-//!   (guest → host). Variants are only ever appended, so indexes stay stable.
+//! - the one import is [`IMPORT_MODULE`] [`IMPORT_HOST_CALL`]`(ptr, len) -> u64`;
+//! - the payload is **ikigai-module's session**, byte for byte: a postcard-encoded `ModuleCall`
+//!   (host to guest) or `ModuleReply` (guest to host). A guest builds it from the wire-only
+//!   mirrors in [`ikigai_module_abi`] (re-exported as [`abi`]), which carry no ikigai-core
+//!   types; a host keeps ikigai-module's typed session and converts at the boundary (R-D6 as
+//!   amended 2026-10-27, option (b)). Variants are only ever appended, so indexes stay stable.
 //!
 //! **Buffer ownership:** the host writes a call into guest memory it obtained with
 //! `ikigai_alloc`, and frees it with `ikigai_free`; a buffer the guest returns (from
@@ -17,63 +20,47 @@
 //! guest drives the session synchronously: `host_call` returns when the host has resolved, so a
 //! pending future inside the guest is a design error, not a wait.
 //!
-//! This mirrors `ikigai-module` 0.4.0's `ModuleCall`/`ModuleReply` shape. Whether the runtime
-//! owns these types or shares `ikigai-module`'s (and whether they are byte-compatible across the
-//! migration) is a decision for the hub (R-D20, item 1); R3 keeps them here so host, guest SDK
-//! and fixtures share one definition and the tier is self-contained.
+//! ★ **A guest's capability is a claim, never authority.** A `HostCall` carries the capability the
+//! guest writes into it; the host maps every host call to the capability of the session the guest
+//! was invoked under (ledger #83), so a guest can narrow its authority and never widen it.
 //!
 //! ```
-//! use ikigai_runtime::session::{pack, unpack, ModuleCall};
-//! use ikigai_runtime::Capability;
+//! use ikigai_runtime::session::{abi, pack, unpack};
 //!
 //! // The packing the ABI returns: ptr in the high 32 bits, len in the low 32.
 //! let packed = pack(0x1234, 0x5678);
 //! assert_eq!(packed, 0x0000_1234_0000_5678);
 //! assert_eq!(unpack(packed), (0x1234, 0x5678));
 //!
-//! // One Invoke round-trips through the same postcard the host and guest use.
-//! let call = ModuleCall::Invoke {
-//!     endpoint: "urn:jail:hello".to_string(),
-//!     body: b"hi".to_vec(),
-//!     capability: Capability::root(),
+//! // One Invoke, as the session carries it (ikigai-module's bytes exactly).
+//! let call = abi::AbiModuleCall::Invoke {
+//!     request: abi::AbiRequest::new(abi::AbiVerb::Source, "urn:jail:hello"),
+//!     capability: abi::AbiCapability::root(),
 //! };
-//! let bytes = postcard::to_allocvec(&call).unwrap();
-//! let back: ModuleCall = postcard::from_bytes(&bytes).unwrap();
-//! assert_eq!(call, back);
+//! let bytes = call.encode().unwrap();
+//! assert_eq!(bytes[0], 0, "Invoke is variant 0");
+//! assert_eq!(abi::AbiModuleCall::decode(&bytes).unwrap(), call);
 //! ```
 
-use ikigai_core::Capability;
-use serde::{Deserialize, Serialize};
+/// The wire-only session types, re-exported so a host or guest names one definition.
+pub use ikigai_module_abi as abi;
+pub use ikigai_module_abi::{
+    AbiCapability, AbiModuleCall, AbiModuleError, AbiModuleReply, AbiRepresentation, AbiRequest,
+    AbiVerb,
+};
 
-/// Host → guest: what the host asks the module to do, or the answer to a `host_call`.
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-pub enum ModuleCall {
-    /// Invoke an endpoint the module serves, with a by-value body, under `capability`.
-    Invoke {
-        endpoint: String,
-        body: Vec<u8>,
-        capability: Capability,
-    },
-    /// The host's answer to a [`ModuleReply::HostCall`] — the resolved bytes, or an error message
-    /// (the typed error is dropped at this boundary, a known limitation, PENDING §1).
-    HostResult(Result<Vec<u8>, String>),
-    /// Ask the module to describe its endpoints (the contract JSON).
-    Describe,
-}
-
-/// Guest → host: the module's reply, or a request back to the kernel mid-session.
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-pub enum ModuleReply {
-    /// The invocation resolved to these bytes.
-    Resolved(Vec<u8>),
-    /// The module is asking the host to resolve a Source request, carrying the capability it
-    /// claims; the host clamps that to the session's (never widening) before resolving.
-    HostCall { iri: String, capability: Capability },
-    /// The module's `describe()` JSON, answering a [`ModuleCall::Describe`].
-    Describe(String),
-    /// The module failed. The string is the message; the type is not carried here.
-    Error(String),
-}
+/// The guest export the host allocates call buffers through: `ikigai_alloc(len) -> u32`.
+pub const EXPORT_ALLOC: &str = "ikigai_alloc";
+/// The guest export the host frees buffers through: `ikigai_free(ptr, len)`.
+pub const EXPORT_FREE: &str = "ikigai_free";
+/// The guest export that runs one session: `ikigai_invoke(ptr, len) -> u64` (packed).
+pub const EXPORT_INVOKE: &str = "ikigai_invoke";
+/// The guest's exported linear memory.
+pub const EXPORT_MEMORY: &str = "memory";
+/// The import module of the ABI's one import.
+pub const IMPORT_MODULE: &str = "ikigai";
+/// The ABI's one import: `"ikigai" "host_call"(ptr, len) -> u64` (packed).
+pub const IMPORT_HOST_CALL: &str = "host_call";
 
 /// Pack a pointer and length into the ABI's single `u64` return (`ptr << 32 | len`).
 #[inline]
@@ -101,24 +88,6 @@ mod tests {
             (0xDEAD_BEEF, 0x0BAD_F00D),
         ] {
             assert_eq!(unpack(pack(ptr, len)), (ptr, len));
-        }
-    }
-
-    #[test]
-    fn reply_variants_round_trip_through_postcard() {
-        let replies = [
-            ModuleReply::Resolved(b"ok".to_vec()),
-            ModuleReply::HostCall {
-                iri: "urn:host:name".into(),
-                capability: Capability::root(),
-            },
-            ModuleReply::Describe("{}".into()),
-            ModuleReply::Error("boom".into()),
-        ];
-        for r in replies {
-            let bytes = postcard::to_allocvec(&r).unwrap();
-            let back: ModuleReply = postcard::from_bytes(&bytes).unwrap();
-            assert_eq!(r, back);
         }
     }
 }

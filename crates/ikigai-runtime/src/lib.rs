@@ -10,7 +10,8 @@
 //! - [`grants`] — the capability families and the **grant → WASI plan**, a pure function
 //!   tested as a table (R-D3);
 //! - [`CoreEngine`] — the core-module engine trait, with wasmtime first and wasmi next (R-D1);
-//! - [`session`] — the ikigai-module **ABI v1** session types and the `u64` packing (R-D6);
+//! - [`session`] — the ikigai-module **ABI v1**: its `u64` packing and export names, and the
+//!   session's wire types from `ikigai-module-abi` (R-D6 as amended);
 //! - [`projection`] — the names and verbs a module's exports project to (R-D4);
 //! - [`loader`] — the content-addressed artifact atom and the compiled-cache key (R-D7);
 //! - [`space`] — the adapter that presents a loaded module as resolvable endpoints.
@@ -26,13 +27,16 @@ pub mod projection;
 pub mod session;
 pub mod space;
 
-pub use engine::{Call, Consumed, CoreEngine, EngineError, HostResolver, Output, Value};
+pub use engine::{
+    Call, Consumed, CoreEngine, EngineError, HostFuture, HostResolver, Invoked, KernelResolver,
+    NoHost, Output, Value,
+};
 pub use grants::{wasi_plan, ClockAccess, FsAccess, Grants, NetAccess, RandomAccess, WasiPlan};
 pub use limits::{Deadline, Limits, Provenance};
 pub use loader::{Artifact, ArtifactDigest, CompiledKey, EngineCompatHash, LoadError};
 pub use projection::{ProjectedEndpoint, Verb};
-pub use session::{pack, unpack, ModuleCall, ModuleReply};
+pub use session::{pack, unpack};
 pub use space::LoadedModule;
 
 // Re-exports so a host links one set of kernel types through the runtime.
-pub use ikigai_core::{Capability, Error, Representation};
+pub use ikigai_core::{Capability, Error, Representation, Request};

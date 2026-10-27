@@ -13,11 +13,7 @@ categories = ["wasm", "api-bindings"]
 
 [dependencies]
 ikigai-core = { workspace = true }
-serde = { workspace = true }
-# `alloc` so the session types round-trip under postcard on both host (std) and guest
-# (wasm32-unknown-unknown) builds without pulling `std` into this wasm-clean crate.
-postcard = { workspace = true, features = ["alloc"] }
+# The session's wire types (R-D6 as amended): re-exported from `session`, with the ABI's
+# `u64` packing and export names beside them. `no_std + alloc`, so this stays wasm-clean.
+ikigai-module-abi = { workspace = true }
 blake3 = { workspace = true }
-
-[dev-dependencies]
-postcard = { workspace = true, features = ["use-std"] }

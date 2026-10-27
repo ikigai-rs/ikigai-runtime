@@ -9,38 +9,33 @@
 use std::sync::Arc;
 use std::time::Instant;
 
-use ikigai_runtime::{Call, Capability, CoreEngine, Error, HostResolver, Limits, Value};
+use ikigai_runtime::{Call, CoreEngine, Limits, NoHost, Value};
 use ikigai_runtime_wasmtime::WasmtimeCoreEngine;
 
 const ADD: &str = r#"(module (func (export "add") (param i32 i32) (result i32) local.get 0 local.get 1 i32.add))"#;
 const SPIN: &str = r#"(module (func (export "spin") (loop $l (br $l))))"#;
 
-struct NoHost;
-impl HostResolver for NoHost {
-    fn source(&self, _iri: &str, _cap: &Capability) -> Result<Vec<u8>, Error> {
-        Err(Error::NotFound("none".into()))
-    }
-}
-
 /// The fuel-per-millisecond calibration fixture (R-D10): spend a known fuel budget on a spin loop,
 /// time it, and report the rate. R1's 3.4e9 units/s is an upper bound for the cheapest loop; this
 /// harness is where a real figure for this host is taken.
-#[test]
+#[tokio::test]
 #[ignore = "calibration harness: run with --ignored --nocapture"]
-fn calibrate_fuel_per_millisecond() {
+async fn calibrate_fuel_per_millisecond() {
     let engine = WasmtimeCoreEngine::new(Limits::fuel(u64::MAX)).unwrap();
     let compiled = engine.compile(SPIN.as_bytes()).unwrap();
     let fuel: u64 = 2_000_000_000;
     let start = Instant::now();
-    let _ = engine.invoke(
-        &compiled,
-        Call::Numeric {
-            export: "spin",
-            args: &[],
-        },
-        &Limits::fuel(fuel),
-        Arc::new(NoHost),
-    );
+    let _ = engine
+        .invoke(
+            &compiled,
+            Call::Numeric {
+                export: "spin",
+                args: &[],
+            },
+            &Limits::fuel(fuel),
+            Arc::new(NoHost),
+        )
+        .await;
     let elapsed = start.elapsed();
     let per_ms = fuel as f64 / elapsed.as_secs_f64() / 1_000.0;
     println!("calibration: {fuel} fuel in {elapsed:?} = {per_ms:.0} units/ms");
@@ -49,9 +44,9 @@ fn calibrate_fuel_per_millisecond() {
 /// The pooling / instantiation-cost fixture (R-D7): compile once, then time many
 /// instantiate-and-call cycles. A baseline for whether `PoolingAllocationConfig` / `InstancePre`
 /// reuse is worth adding.
-#[test]
+#[tokio::test]
 #[ignore = "pooling harness: run with --ignored --nocapture"]
-fn measure_instantiation_cost() {
+async fn measure_instantiation_cost() {
     let engine = WasmtimeCoreEngine::new(Limits::fuel(u64::MAX)).unwrap();
     let compiled = engine.compile(ADD.as_bytes()).unwrap();
     let n = 10_000u32;
@@ -67,6 +62,7 @@ fn measure_instantiation_cost() {
                 &Limits::fuel(1_000_000),
                 Arc::new(NoHost),
             )
+            .await
             .unwrap();
     }
     let elapsed = start.elapsed();
