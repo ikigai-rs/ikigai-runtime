@@ -1004,7 +1004,6 @@ dependencies = [
  "futures",
  "http",
  "http-body-util",
- "hyper",
  "ikigai-core",
  "ikigai-http",
  "ikigai-module",

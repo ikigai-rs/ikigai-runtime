@@ -59,10 +59,10 @@ blake3 = "1"
 # and the fixture suite as its gate. wasmtime 50 makes `Config::async_support` a no-op, so the
 # core-module tier never calls it and runs fully synchronously.
 wasmtime = "50.0.0"
-# wasmtime-wasi carries the WASI p1 path (`p1` feature) the core-module tier's third convention
-# uses; it moves in lockstep with wasmtime's major. `default-features = false` here (not on the
-# member) so the member's `features = ["p1"]` takes only what the core-module tier needs — the
-# component-model WASI (p2/p3) arrives with the component tier in R3b.
+# wasmtime-wasi carries the WASI p1 path (`p1`, the core-module tier's third convention) and p2
+# (the component tier); it moves in lockstep with wasmtime's major. `default-features = false`
+# here (not on the member) so the member names exactly what it takes; p3 is the member's `p3`
+# feature, built on nightly until 2026-11-12 (R-D17).
 wasmtime-wasi = { version = "50.0.0", default-features = false }
 # wasmtime-wasi-http moves with wasmtime's major too. `default-features = false` drops
 # `default-send-request` (wasmtime's own HTTP client, R-D5 rules it out) and p3.
@@ -78,8 +78,10 @@ serde_json = "1"
 http = "1"
 http-body-util = "0.1"
 bytes = "1"
-hyper = { version = "1", default-features = false }
+# The tests' executor (dev-only): wasmtime's async calls run on any executor.
 tokio = { version = "1", default-features = false }
 # wit-parser is pinned to the version the pinned wasmtime uses (both 0.261 → wasmparser 0.261),
-# so the WIT lift and wasmtime read one wasmparser (R-D14, R-D17).
+# so the WIT lift and wasmtime read one wasmparser (R-D14, R-D17). The host reads a component's
+# WIT docs with it. (The guest SDK's wit-bindgen 0.63 reads 0.262; that is a guest-side build
+# dependency and never links into a host binary.)
 wit-parser = "0.261.0"

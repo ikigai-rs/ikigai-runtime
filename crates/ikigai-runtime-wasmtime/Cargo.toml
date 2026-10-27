@@ -48,8 +48,6 @@ wit-parser = { workspace = true, features = ["decoding"] }
 http = { workspace = true }
 http-body-util = { workspace = true }
 bytes = { workspace = true }
-hyper = { workspace = true }
-tokio = { workspace = true }
 
 [features]
 # The guest-fixture end-to-end tests (`tests/jail.rs`, `tests/wasi_p1.rs`, `tests/component*.rs`,
