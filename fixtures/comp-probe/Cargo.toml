@@ -1,0 +1,22 @@
+# R1's probe grown into a component (R-D18): a Rust std guest that tries every ambient authority,
+# one export per probe. Built for wasm32-wasip2 by `ikigai-runtime-wasmtime`'s build.rs under
+# `jail-fixtures`; exercised by `tests/probe.rs` (the probe table as tests).
+[package]
+name = "comp-probe"
+version = "0.0.0"
+edition = "2021"
+publish = false
+
+[workspace]
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+wit-bindgen = { version = "0.63.0", default-features = false, features = ["macros", "realloc", "std"] }
+# wasi:random and wasi:http bindings (std reaches neither directly).
+wasip2 = "2.0.1"
+
+[profile.release]
+opt-level = "s"
+lto = true

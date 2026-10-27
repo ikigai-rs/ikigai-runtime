@@ -99,6 +99,48 @@ impl Limits {
         }
     }
 
+    /// The budget a caller's grants state (R-D10): `urn:cap:compute:fuel:<n>`,
+    /// `urn:cap:compute:memory:<bytes>` and `urn:cap:compute:time:<ms>` (a BUDGET deadline, so its
+    /// exhaustion is `OverBudget`). Holding several grants of one family means the caller may use
+    /// the largest, so that one is its opinion; a family it holds none of is no opinion, as is
+    /// root (the host ceiling still bounds the run). A malformed number grants nothing.
+    ///
+    /// ```
+    /// use ikigai_runtime::{Grants, Limits};
+    ///
+    /// let caller = Grants::from_scopes([
+    ///     "urn:cap:compute:fuel:1000",
+    ///     "urn:cap:compute:fuel:5000",
+    ///     "urn:cap:compute:time:250",
+    /// ]);
+    /// let limits = Limits::from_grants(&caller);
+    /// assert_eq!(limits.fuel, Some(5000));
+    /// assert_eq!(limits.deadline.unwrap().after.as_millis(), 250);
+    /// assert_eq!(limits.memory_bytes, None);
+    /// assert_eq!(Limits::from_grants(&Grants::Root), Limits::unbounded());
+    /// ```
+    pub fn from_grants(grants: &crate::Grants) -> Limits {
+        let scopes = match grants {
+            crate::Grants::Root => return Limits::unbounded(),
+            crate::Grants::Scoped(scopes) => scopes,
+        };
+        let largest = |family: &str| -> Option<u64> {
+            scopes
+                .iter()
+                .filter_map(|scope| scope.strip_prefix(family))
+                .filter_map(|n| n.parse::<u64>().ok())
+                .max()
+        };
+        Limits {
+            fuel: largest("urn:cap:compute:fuel:"),
+            deadline: largest("urn:cap:compute:time:")
+                .map(|ms| Deadline::budget(Duration::from_millis(ms))),
+            memory_bytes: largest("urn:cap:compute:memory:")
+                .map(|b| usize::try_from(b).unwrap_or(usize::MAX)),
+            max_wasm_stack: None,
+        }
+    }
+
     /// Whether any bound is set. The engine refuses a run where this is `false`.
     pub fn is_bounded(&self) -> bool {
         self.fuel.is_some() || self.deadline.is_some() || self.memory_bytes.is_some()

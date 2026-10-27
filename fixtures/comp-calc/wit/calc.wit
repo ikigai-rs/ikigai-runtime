@@ -1,0 +1,55 @@
+package acme:calc@1.0.0;
+
+/// Arithmetic and friends: a component nobody wrote for ikigai.
+interface calc {
+  /// Add two integers.
+  add: func(a: s32, b: s32) -> s32;
+  /// Greet someone by name.
+  greet: func(name: string) -> string;
+  /// Upper-case some bytes.
+  shout: func(body: list<u8>) -> list<u8>;
+
+  record stats {
+    min: f64,
+    max: f64,
+    mean: f64,
+  }
+  /// Summarize a list of numbers.
+  summarize: func(xs: list<f64>) -> stats;
+  /// Parse a number, refusing what is not one.
+  parse: func(text: string) -> result<u32, string>;
+  /// Halve an even number; an odd one has no half.
+  half: func(n: u32) -> option<u32>;
+
+  enum color {
+    red,
+    green,
+    blue,
+  }
+  /// Name a color, with an optional shade.
+  paint: func(c: color, shade: option<u8>) -> string;
+  /// Where a place is, looked up through the `lookup` import.
+  locate: func(place: string) -> string;
+  /// Remember a note; the mount declares it a Sink.
+  save: func(text: string) -> u32;
+  /// Loop until the budget runs out.
+  spin: func() -> u64;
+
+  resource counter {
+    constructor();
+    bump: func() -> u32;
+  }
+  /// Open a counter: a handle, so not projected.
+  open: func() -> counter;
+}
+
+interface lookup {
+  find: func(place: string) -> string;
+}
+
+world calc-app {
+  import lookup;
+  export calc;
+  /// The version of this component.
+  export version: func() -> string;
+}

@@ -1,0 +1,34 @@
+package ikigai:probe@0.1.0;
+
+/// R1's probe as a component (R-D18's probe table): one function per ambient authority, each
+/// answering what it was allowed. A Rust std guest, so it imports the WASI std imports.
+interface probe {
+  /// The process arguments.
+  args: func() -> string;
+  /// One environment variable.
+  env: func(name: string) -> string;
+  /// List the root directory.
+  read-root: func() -> string;
+  /// Read `/data/x.txt`.
+  read-data: func() -> string;
+  /// Write `/data/out.txt`.
+  write-data: func(text: string) -> string;
+  /// Open a TCP connection.
+  tcp: func(addr: string) -> string;
+  /// Resolve a host name.
+  dns: func(host: string) -> string;
+  /// Spawn a process.
+  spawn: func() -> string;
+  /// The wall clock, in seconds since the epoch.
+  clock: func() -> string;
+  /// Eight bytes of secure randomness, as hex.
+  random: func() -> string;
+  /// Print a line to stdout.
+  print: func(text: string) -> string;
+  /// GET a URL through wasi:http.
+  http-get: func(url: string) -> string;
+}
+
+world probe-app {
+  export probe;
+}

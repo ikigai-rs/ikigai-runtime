@@ -9,8 +9,8 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use ikigai_core::{
-    Description, EndpointSpace, Exact, Fallback, FnEndpoint, Invocation, Iri, Kernel,
-    MetaRenderer, ReprType, Request, Space, Verb as CoreVerb,
+    Description, EndpointSpace, Exact, Fallback, FnEndpoint, Invocation, Iri, Kernel, MetaRenderer,
+    ReprType, Request, Space, Verb as CoreVerb,
 };
 use ikigai_module::{ModuleCall, ModuleFloor, ModuleReply, ModuleSpace};
 use ikigai_runtime::space::Convention;
@@ -39,7 +39,10 @@ impl HostResolver for HostName {
             if !capability.allows(READ_NAME) {
                 return Err(Error::Denied("urn:host:name".to_string()));
             }
-            Ok(Representation::new(ReprType::new("text/plain"), b"camel".to_vec()))
+            Ok(Representation::new(
+                ReprType::new("text/plain"),
+                b"camel".to_vec(),
+            ))
         })
     }
 }

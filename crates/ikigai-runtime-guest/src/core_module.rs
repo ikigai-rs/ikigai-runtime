@@ -8,12 +8,19 @@
 //!
 //! ## Why a guest replies with [`Reply`], not `AbiModuleReply`
 //!
-//! serde's derived serializer for `AbiModuleReply` matches all eight variants, so every guest
-//! links the encoding of every payload, including the ones only a HOST-side module ever sends.
-//! [`Reply`] is the guest's role of the same enum: the variants a guest answers with, each
-//! encoded at **its `AbiModuleReply` index** through postcard's own serializer, so the bytes are
-//! identical (`tests` below compare every variant against the derived encoding) and nothing of
-//! the wire is re-implemented. `HostCall` is the SDK's own business ([`host_call`]).
+//! [`Reply`] is the guest's ROLE of `AbiModuleReply`: the seven answers a guest gives, without
+//! `HostCall`, which is a request and never a final answer (a host refuses one in that place).
+//! The type says so at compile time. Each variant is encoded at **its `AbiModuleReply` index**
+//! through postcard's own serializer, so the bytes are identical (`tests` below compare every
+//! variant against the derived encoding) and nothing of the wire is re-implemented. `HostCall`
+//! is the SDK's own business ([`host_call`]).
+//!
+//! It is NOT a size lever, measured at R3b (stripped, release, opt-level `s`, a guest that
+//! makes a host call, echoes an argument and answers `Describe`): the derived encoder 47,138
+//! bytes, this one 46,997, and a split down to the four invocation-time answers 43,262. The
+//! weight the abi session adds over R3a's subset (31,138) is the DECODE of a real session: the
+//! request's argument map, the representation's type parameters and the typed errors, in
+//! `ikigai-module-abi`'s derived `Deserialize` and serde's visitors.
 
 use crate::abi::{
     AbiCapability, AbiModuleCall, AbiModuleCard, AbiModuleError, AbiModuleManifest, AbiModuleReply,

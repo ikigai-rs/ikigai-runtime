@@ -41,6 +41,9 @@ futures = { workspace = true }
 rand = { workspace = true }
 blake3 = { workspace = true }
 serde_json = { workspace = true }
+# The WIT docs a component carries (the `package-docs` section), for a projected endpoint's
+# summary (R-D4, R-D14): wit-parser's own decoder, pinned to the version wasmtime 50 links.
+wit-parser = { workspace = true, features = ["decoding"] }
 # The response and request types `wasi:http`'s hook speaks.
 http = { workspace = true }
 http-body-util = { workspace = true }
