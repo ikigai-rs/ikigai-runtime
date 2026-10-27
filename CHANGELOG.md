@@ -35,6 +35,16 @@
   (`urn:cap:fs:read:/ws` + `urn:cap:fs:read:-/ws/secret`): a WASI preopen cannot exclude a path
   inside it, and the plan used to drop every exclusion and preopen all of `/ws`. An exclusion
   under no preopen changes nothing.
+- **A preopen needs `fs:read`** (breaking): a WASI preopen always reads (wasmtime's `ReadWrite`
+  includes read), so a path with no `read` grant gets no preopen at all and its writes go through
+  the kernel. `read` alone is `ReadOnly`; `read` + `write` + `delete` is `ReadWrite`. `write` +
+  `delete` alone used to be a `ReadWrite` preopen, and the guest could read through it.
+- **No symbolic link between the jail root and a preopen**: each component below the root, down
+  to the preopen directory, is checked with `symlink_metadata`, and a link anywhere refuses the
+  grant, naming it and the link, as ikigai-fs refuses a link anywhere in a path. A grant naming
+  `<jail>/data`, where `data` linked out of the jail, used to preopen the link's target. The root
+  itself may still be a link (its canonical spelling is placed too). A link inside a preopen is
+  cap-std's to refuse, and a test pins that it does.
 
 ## 0.2.0
 

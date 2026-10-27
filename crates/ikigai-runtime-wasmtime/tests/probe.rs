@@ -6,7 +6,7 @@
 //! | authority | endpoint world, and app with no grant | app world, the grant alone |
 //! |---|---|---|
 //! | args, env | `[]`, absent | `urn:cap:env:HOME`: exactly that value, from the HOST |
-//! | read `/`, read or write `/data` | no preopen | `fs:read:<jail>/data` (a HOST path, as in ikigai-fs) reads `/data`, cannot write; `fs:write`+`fs:delete` writes; a path outside the jail, or an exclusion under the preopen, is refused |
+//! | read `/`, read or write `/data` | no preopen | `fs:read:<jail>/data` (a HOST path, as in ikigai-fs) reads `/data`, cannot write; `fs:read`+`fs:write`+`fs:delete` writes, and without `fs:read` there is no preopen; a path outside the jail, through a symbolic link, or an exclusion under the preopen, is refused |
 //! | TCP connect | refused at the import | `net:<ip>:<port>`: that address and no other |
 //! | DNS | refused at the import | still refused (never granted) |
 //! | spawn | `Unsupported` (no WASI interface) | `Unsupported` |
@@ -235,7 +235,7 @@ async fn env_grants_exactly_the_named_value_from_the_host() {
 }
 
 #[tokio::test]
-async fn fs_read_preopens_read_only_and_write_needs_write_and_delete() {
+async fn fs_read_preopens_read_only_and_write_needs_read_write_and_delete() {
     let root = jail("fs");
     let probe = Probe::mount(
         World::App,
@@ -264,7 +264,12 @@ async fn fs_read_preopens_read_only_and_write_needs_write_and_delete() {
         format!("urn:cap:fs:write:{data}"),
         format!("urn:cap:fs:delete:{data}"),
     );
-    let write = [write_grant.as_str(), delete_grant.as_str()];
+    // A preopen always reads, so a WASI write needs read + write + delete on the path.
+    let write = [
+        read_grant.as_str(),
+        write_grant.as_str(),
+        delete_grant.as_str(),
+    ];
     assert_eq!(
         probe
             .run("write-data", &[("text", "written")], &write)
@@ -523,4 +528,108 @@ async fn a_jail_root_of_slash_is_refused_at_mount() {
         Err(other) => panic!("expected InvalidArgument, got {other:?}"),
         Ok(_) => panic!("a jail root of `/` was mounted"),
     }
+}
+
+/// A WASI preopen always reads, so a path with no `read` grant gets none. At 1a0ee9a3
+/// `write` + `delete` alone was a ReadWrite preopen, and the guest read `/data/x.txt` through it.
+#[tokio::test]
+async fn write_and_delete_without_read_get_no_preopen() {
+    let root = jail("no-read");
+    let probe = Probe::mount(
+        World::App,
+        AppHost {
+            fs_root: Some(root.clone()),
+            ..AppHost::default()
+        },
+    )
+    .await;
+    let w = format!("urn:cap:fs:write:{}/data", root.display());
+    let d = format!("urn:cap:fs:delete:{}/data", root.display());
+    let read = probe.try_("read-data", &[], &[&w, &d]).await;
+    let write = probe.try_("write-data", &[("text", "x")], &[&w, &d]).await;
+    let _ = std::fs::remove_dir_all(&root);
+    assert!(read.unwrap().starts_with("err:"), "no preopen, so no read");
+    assert!(write.unwrap().starts_with("err:"), "nor a WASI write");
+}
+
+/// A jail root holding `data` as a link to a directory outside the jail, `outside/x.txt`, and
+/// `real/data/esc` as a link out of a plain directory. Answers `(base, root)`.
+#[cfg(unix)]
+fn linked_jail(test: &str) -> (PathBuf, PathBuf) {
+    let base = std::env::temp_dir().join(format!(
+        "ikigai-runtime-probe-{}-{test}",
+        std::process::id()
+    ));
+    let root = base.join("jail");
+    let outside = base.join("outside");
+    std::fs::create_dir_all(root.join("real").join("data")).unwrap();
+    std::fs::create_dir_all(&outside).unwrap();
+    std::fs::write(outside.join("x.txt"), "outside the jail").unwrap();
+    std::fs::write(
+        root.join("real").join("data").join("x.txt"),
+        "inside the jail",
+    )
+    .unwrap();
+    std::os::unix::fs::symlink(&outside, root.join("data")).unwrap();
+    std::os::unix::fs::symlink(&outside, root.join("real").join("data").join("esc")).unwrap();
+    (base, root)
+}
+
+/// ikigai-fs refuses a symbolic link anywhere in a path, and so does the jail. At 1a0ee9a3 a
+/// grant naming `<jail>/data`, where `data` is a link out of the jail, preopened the link's target
+/// and the guest read `outside/x.txt`.
+#[cfg(unix)]
+#[tokio::test]
+async fn a_grant_through_a_symbolic_link_is_refused_naming_the_link() {
+    let (base, root) = linked_jail("link");
+    let probe = Probe::mount(
+        World::App,
+        AppHost {
+            fs_root: Some(root.clone()),
+            ..AppHost::default()
+        },
+    )
+    .await;
+    let grant = format!("urn:cap:fs:read:{}/data", root.display());
+    let answer = probe.try_("read-data", &[], &[&grant]).await;
+    let _ = std::fs::remove_dir_all(&base);
+    match answer {
+        Err(Error::Denied(message)) => assert!(
+            message.contains("symbolic link")
+                && message.contains(&format!("{}/data`", root.display())),
+            "names the grant and the link: {message}"
+        ),
+        other => panic!("a grant through a link must be refused; got {other:?}"),
+    }
+}
+
+/// A link INSIDE a preopened directory is wasmtime's to police: cap-std refuses one that leaves
+/// the preopen, so the jail needs no second walker for it.
+#[cfg(unix)]
+#[tokio::test]
+async fn a_link_inside_a_preopen_cannot_leave_it() {
+    let (base, root) = linked_jail("inner-link");
+    let probe = Probe::mount(
+        World::App,
+        AppHost {
+            fs_root: Some(root.clone()),
+            ..AppHost::default()
+        },
+    )
+    .await;
+    // The preopen `<jail>/real` appears as `/real`; `esc` inside it links out of the jail.
+    let grant = format!("urn:cap:fs:read:{}/real", root.display());
+    let answer = probe
+        .try_("read-path", &[("path", "/real/data/esc/x.txt")], &[&grant])
+        .await;
+    // The control: the same preopen reads a plain file beside the link.
+    let control = probe
+        .try_("read-path", &[("path", "/real/data/x.txt")], &[&grant])
+        .await;
+    let _ = std::fs::remove_dir_all(&base);
+    assert_eq!(control.unwrap(), "ok: \"inside the jail\"");
+    assert!(
+        answer.as_deref().is_ok_and(|text| text.starts_with("err:")),
+        "cap-std must refuse the escaping link: {answer:?}"
+    );
 }

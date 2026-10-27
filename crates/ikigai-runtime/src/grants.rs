@@ -43,10 +43,14 @@ impl Grants {
     }
 }
 
-/// Read-only or read-write preopen (R-D3).
+/// Read-only or read-write preopen (R-D3). A WASI preopen always reads (wasmtime's `ReadWrite`
+/// includes read), so both need an `fs:read` grant on the path.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum FsAccess {
+    /// `fs:read`.
     ReadOnly,
+    /// `fs:read` + `fs:write` + `fs:delete`: WASI has no write-without-delete, and no
+    /// write-without-read.
     ReadWrite,
 }
 
@@ -296,9 +300,9 @@ pub fn wasi_plan(grants: &Grants) -> Result<WasiPlan, PlanError> {
 
     let mut plan = WasiPlan::denied();
 
-    // Collect fs verbs per path so a path with both `write` and `delete` becomes ReadWrite, a
-    // path with `read` becomes ReadOnly, and a write-only path gets no preopen (its writes go
-    // through the kernel, since WASI has no write-without-delete).
+    // Collect fs verbs per path. A preopen always reads, so only a path with `read` gets one:
+    // ReadOnly with `read` alone, ReadWrite with `read` + `write` + `delete`. A path without
+    // `read` gets no preopen whatever else it holds, and its writes go through the kernel.
     let mut fs_read: BTreeSet<&str> = BTreeSet::new();
     let mut fs_write: BTreeSet<&str> = BTreeSet::new();
     let mut fs_delete: BTreeSet<&str> = BTreeSet::new();
@@ -360,24 +364,16 @@ pub fn wasi_plan(grants: &Grants) -> Result<WasiPlan, PlanError> {
         }
     }
 
-    let mut paths: BTreeSet<&str> = BTreeSet::new();
-    paths.extend(fs_read.iter().copied());
-    paths.extend(fs_write.iter().copied());
-    for path in paths {
-        let can_read = fs_read.contains(path);
-        let can_write = fs_write.contains(path) && fs_delete.contains(path);
-        let access = match (can_read, can_write) {
-            (_, true) => Some(FsAccess::ReadWrite),
-            (true, false) => Some(FsAccess::ReadOnly),
-            // write-only (no delete, no read): no WASI preopen; writes go through the kernel.
-            (false, false) => None,
+    for &path in &fs_read {
+        let access = if fs_write.contains(path) && fs_delete.contains(path) {
+            FsAccess::ReadWrite
+        } else {
+            FsAccess::ReadOnly
         };
-        if let Some(access) = access {
-            plan.fs.push(FsPreopen {
-                host_path: path.to_string(),
-                access,
-            });
-        }
+        plan.fs.push(FsPreopen {
+            host_path: path.to_string(),
+            access,
+        });
     }
 
     // An exclusion a preopen would serve anyway: refuse, never widen. A read-only preopen
@@ -469,8 +465,12 @@ mod tests {
     }
 
     #[test]
-    fn row_fs_write_plus_delete_is_readwrite_but_write_alone_is_not() {
-        let rw = plan_of(&["urn:cap:fs:write:/out", "urn:cap:fs:delete:/out"]);
+    fn row_fs_read_write_delete_is_readwrite_and_read_with_part_of_it_is_readonly() {
+        let rw = plan_of(&[
+            "urn:cap:fs:read:/out",
+            "urn:cap:fs:write:/out",
+            "urn:cap:fs:delete:/out",
+        ]);
         assert_eq!(
             rw.fs,
             vec![FsPreopen {
@@ -478,9 +478,23 @@ mod tests {
                 access: FsAccess::ReadWrite
             }]
         );
-        // write without delete: no WASI preopen (writes go through the kernel).
-        let wonly = plan_of(&["urn:cap:fs:write:/out"]);
-        assert!(wonly.fs.is_empty());
+        // read + write without delete: WASI has no write-without-delete, so read-only.
+        let ro = plan_of(&["urn:cap:fs:read:/out", "urn:cap:fs:write:/out"]);
+        assert_eq!(ro.fs[0].access, FsAccess::ReadOnly);
+    }
+
+    /// A WASI preopen always reads (wasmtime's `ReadWrite` includes read), so a path with no
+    /// `read` grant gets no preopen at all, and its writes go through the kernel. At 1a0ee9a3
+    /// `write` + `delete` alone was a ReadWrite preopen, and the guest read through it.
+    #[test]
+    fn row_fs_without_read_gets_no_preopen_whatever_else_it_holds() {
+        for scopes in [
+            &["urn:cap:fs:write:/out"][..],
+            &["urn:cap:fs:delete:/out"],
+            &["urn:cap:fs:write:/out", "urn:cap:fs:delete:/out"],
+        ] {
+            assert!(plan_of(scopes).fs.is_empty(), "{scopes:?}");
+        }
     }
 
     #[test]
@@ -555,7 +569,11 @@ mod tests {
             assert!(err.reason.contains("urn:cap:fs:read:/ws"), "{err}");
         }
         // A read-write preopen serves every verb, so any verb's exclusion under it refuses.
-        let rw = ["urn:cap:fs:write:/ws", "urn:cap:fs:delete:/ws"];
+        let rw = [
+            "urn:cap:fs:read:/ws",
+            "urn:cap:fs:write:/ws",
+            "urn:cap:fs:delete:/ws",
+        ];
         for deny in [
             "urn:cap:fs:read:-/ws/secret",
             "urn:cap:fs:write:-/ws/secret",
@@ -566,7 +584,7 @@ mod tests {
             assert_eq!(err.scope, deny);
             assert!(
                 err.reason
-                    .contains("urn:cap:fs:write:/ws + urn:cap:fs:delete:/ws"),
+                    .contains("urn:cap:fs:read:/ws + urn:cap:fs:write:/ws + urn:cap:fs:delete:/ws"),
                 "{err}"
             );
         }

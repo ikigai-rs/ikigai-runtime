@@ -190,6 +190,15 @@ pub fn check_jail_root_path(root: &Path) -> Result<String, String> {
 /// filesystem spells it (every link resolved: `/private/var/…` for `/var/…` on macOS), the two
 /// spellings ikigai-fs places a scope against, so one grant string names one directory in both.
 /// The directory opened is always the root joined with plain names.
+///
+/// **No symbolic link between the root and the preopen.** Each component below the jail root,
+/// down to the preopen directory itself, is checked with `symlink_metadata`, and a link anywhere
+/// refuses the grant, naming the link: ikigai-fs refuses a link anywhere in a path, and a
+/// preopen opened through one would serve the link's target (`<jail>/data` → a directory
+/// outside the jail) under a grant that names `<jail>/data`. The root itself may be a link; that
+/// is the canonical-spelling case above, and a root resolving to `/` is refused at mount. A
+/// component that does not exist ends the walk, and the preopen reports it. Links INSIDE the
+/// preopened directory are wasmtime's: cap-std refuses one that leaves the preopen.
 fn place(host_path: &str, root: &Path) -> Result<(PathBuf, String), String> {
     use ikigai_runtime::grants::guest_path_in_jail;
     let spelled = check_jail_root_path(root)?;
@@ -214,12 +223,28 @@ fn place(host_path: &str, root: &Path) -> Result<(PathBuf, String), String> {
             "`{host_path}` does not name a path under the jail root"
         ));
     }
-    Ok((base.join(relative), guest))
+    let mut walked = base.clone();
+    for name in relative.components() {
+        walked.push(name);
+        match std::fs::symlink_metadata(&walked) {
+            Ok(meta) if meta.file_type().is_symlink() => {
+                return Err(format!(
+                    "`{}` is a symbolic link; an fs grant path must not pass through one, \
+                     since the preopen would serve the link's target",
+                    walked.display()
+                ))
+            }
+            Ok(_) => {}
+            Err(_) => break,
+        }
+    }
+    Ok((walked, guest))
 }
 
 /// Apply a plan's grants to a deterministic builder. Errors name the grant the host could not
-/// serve: an `fs` grant with no jail root, one outside the jail root (naming the root), a preopen
-/// that does not exist.
+/// serve: an `fs` grant with no jail root, one outside the jail root (naming the root), one whose
+/// path passes through a symbolic link below the root (naming the link), a preopen that does not
+/// exist.
 pub fn apply_plan(
     builder: &mut WasiCtxBuilder,
     plan: &WasiPlan,
@@ -359,6 +384,40 @@ mod tests {
         let _ = std::fs::remove_dir_all(&base);
         assert_eq!(placed.unwrap(), (resolved.join("ws"), "/ws".to_string()));
         assert!(outside.is_err());
+    }
+
+    /// At 1a0ee9a3 `<jail>/data` as a link to a directory outside the jail was preopened, and the
+    /// guest read the link's target under a grant naming `<jail>/data`.
+    #[cfg(unix)]
+    #[test]
+    fn a_link_anywhere_below_the_jail_root_refuses_the_grant_naming_the_link() {
+        let base =
+            std::env::temp_dir().join(format!("ikigai-runtime-links-{}", std::process::id()));
+        let root = base.join("jail");
+        let outside = base.join("outside");
+        std::fs::create_dir_all(root.join("real").join("sub")).unwrap();
+        std::fs::create_dir_all(outside.join("sub")).unwrap();
+        std::os::unix::fs::symlink(&outside, root.join("leaf")).unwrap();
+        std::os::unix::fs::symlink(&outside, root.join("mid")).unwrap();
+        std::os::unix::fs::symlink(root.join("real"), root.join("inner")).unwrap();
+        let spelled = check_jail_root_path(&root).unwrap();
+        let at = |rel: &str| place(&format!("{spelled}/{rel}"), &root);
+        let results = [
+            ("leaf", at("leaf")),
+            ("mid", at("mid/sub")),
+            // A link that stays inside the jail is still a second name for a directory.
+            ("inner", at("inner/sub")),
+        ];
+        let plain = at("real/sub");
+        let _ = std::fs::remove_dir_all(&base);
+        for (link, result) in results {
+            let err = result.unwrap_err();
+            assert!(
+                err.contains(&format!("{spelled}/{link}`")) && err.contains("symbolic link"),
+                "{err}"
+            );
+        }
+        assert_eq!(plain.unwrap().0, root.join("real").join("sub"));
     }
 
     #[test]
