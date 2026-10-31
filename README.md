@@ -49,6 +49,11 @@ R3a: the scaffold and the core-module tier. R3b: the component tier and the prob
 signing and the shell (R3c), and the first apps (R4, R5) follow. Nothing here runs anyone else's
 code yet; the clamp, signing and a red-team round come first (R-D20).
 
+## Accessibility
+
+What these crates emit that people read (run failures, refusals and argument errors), the rules
+that text follows and how to report a barrier are in [ACCESSIBILITY.md](ACCESSIBILITY.md).
+
 ## License
 
 Dual-licensed under [MIT](LICENSE-MIT) or [Apache-2.0](LICENSE-APACHE), at your option.
