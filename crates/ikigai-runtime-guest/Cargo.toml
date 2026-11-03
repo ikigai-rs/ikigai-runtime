@@ -14,7 +14,7 @@ categories = ["wasm", "api-bindings"]
 [dependencies]
 # The ABI's packing and export names, and (re-exported from it) ikigai-module-abi's wire types.
 # Only `session` is used, so a guest links nothing of ikigai-core (LTO drops it).
-ikigai-runtime = { path = "../ikigai-runtime", version = "0.2.0" }
+ikigai-runtime = { path = "../ikigai-runtime", version = "0.3.0" }
 postcard = { workspace = true, features = ["alloc"] }
 # For the guest's role-split reply encoder (`core_module::Reply`): postcard's serializer, at the
 # derived enum's variant indexes. `alloc` only, no derive.

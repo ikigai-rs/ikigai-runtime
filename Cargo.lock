@@ -919,9 +919,9 @@ dependencies = [
 
 [[package]]
 name = "ikigai-core"
-version = "0.2.7"
+version = "0.3.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f9a9d9b771bba51dd4e67db4f2f002d6c85ef587094918bd50a11882a3721018"
+checksum = "76e62039fb8dd80f5176d2c990f1a34aeafbcda5495936daf84edb0019e19944"
 dependencies = [
  "async-trait",
  "blake3",
@@ -935,9 +935,9 @@ dependencies = [
 
 [[package]]
 name = "ikigai-http"
-version = "0.5.0"
+version = "0.6.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "2bc952827a20d9b533b9bc053e6bec2a80db90354f2df2835ed6af72f4b26bda"
+checksum = "110e67948bdc00f7e4927a2a7a7c5c4ac2316def917722c1707173fce003e1a7"
 dependencies = [
  "async-trait",
  "base64",
@@ -950,9 +950,9 @@ dependencies = [
 
 [[package]]
 name = "ikigai-module"
-version = "0.5.1"
+version = "0.6.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "13e2df324ba2aba0acea177ab70d15139e3c688c8fd395aa284ae941a5d28986"
+checksum = "e85a1384ae222148b2fd8584f914f66b7927df0e3eec2fe2594ad386290a94b6"
 dependencies = [
  "async-trait",
  "futures",
@@ -976,7 +976,7 @@ dependencies = [
 
 [[package]]
 name = "ikigai-runtime"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "blake3",
  "futures",
@@ -986,7 +986,7 @@ dependencies = [
 
 [[package]]
 name = "ikigai-runtime-guest"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "ikigai-runtime",
  "postcard",
@@ -996,7 +996,7 @@ dependencies = [
 
 [[package]]
 name = "ikigai-runtime-wasmtime"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "async-trait",
  "blake3",
@@ -1020,7 +1020,7 @@ dependencies = [
 
 [[package]]
 name = "ikigai-runtime-wit"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "wit-parser 0.261.0",
 ]
