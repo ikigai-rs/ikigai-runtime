@@ -10,7 +10,7 @@ members = ["crates/*"]
 exclude = ["fixtures"]
 
 [workspace.package]
-version = "0.2.0"
+version = "0.3.0"
 edition = "2021"
 # wasmtime 50 (and wasmtime-wasi 50) declare rust-version 1.97.0; that is the true floor, so
 # the shared `msrv-from-manifest` CI job checks exactly it (R-D17).
@@ -25,19 +25,22 @@ homepage = "https://github.com/ikigai-rs/ikigai-runtime"
 # links exactly one `ikigai-core`. DEFAULT features only (no `declare`), which is just
 # wasm-clean, with no `getrandom`. The runtime speaks
 # core's `Representation`, `Error` (incl. `OverBudget`, since 0.1.108) and `Capability`.
-# 0.2.0 is the streams release (ledger #2261). The old 0.1 pin meant <0.2.0
-# under Cargo's 0.x caret rules. Core types are part of the runtime's public API.
-ikigai-core = "0.2.0"
+# 0.3.0 is the scoped content store (ledger #2965): held content is scoped to whoever delivered
+# it, and `ContentStore::put`/`put_replay` are root-only. The old 0.2 pin meant <0.3.0 under
+# Cargo's 0.x caret rules. Core types are part of the runtime's public API.
+ikigai-core = "0.3.0"
 # The J2 session's wire types (R-D6 as amended 2026-10-27, option (b)): wire-only mirrors of
 # ikigai-module's `ModuleCall`/`ModuleReply`, byte-compatible with them and free of
-# ikigai-core, so a guest links the session and nothing else. 0.1.0 is the first release;
-# under 0.x caret rules this pin is `<0.2.0`, a ceiling as well as a floor (rule 5).
+# ikigai-core, so a guest links the session and nothing else. 0.1.0 is the first release, and
+# ikigai-core 0.3.0 does not move it, since it links no core; under 0.x caret rules this pin is
+# `<0.2.0`, a ceiling as well as a floor (rule 5).
 ikigai-module-abi = "0.1.0"
 # The HOST keeps ikigai-module's typed session (R-D6 as amended): its `ModuleCall`/
 # `ModuleReply` over core's types, the `ModuleTransport` a jailed module is mounted through
-# (`ModuleSpace`), and `ModuleError`'s conversions to and from core's `Error`. 0.5.1 is the
-# release that re-exports the abi crate and converts to and from it; `<0.6.0` (rule 5).
-ikigai-module = "0.5.1"
+# (`ModuleSpace`), and `ModuleError`'s conversions to and from core's `Error`. It re-exports the
+# abi crate and converts to and from it. 0.6.0 is the release on ikigai-core 0.3.0; `<0.7.0`
+# (rule 5).
+ikigai-module = "0.6.0"
 serde = { version = "1", features = ["derive"] }
 # The J2 session payload is postcard (R-D6). `use-std` on the host; the guest uses the same
 # crate with `alloc` (see `ikigai-runtime-guest`).
@@ -68,9 +71,9 @@ wasmtime-wasi = { version = "50.0.0", default-features = false }
 # `default-send-request` (wasmtime's own HTTP client, R-D5 rules it out) and p3.
 wasmtime-wasi-http = { version = "50.0.0", default-features = false }
 # The HTTP method table `wasi:http` requests are mapped through (`Method::{iri, verb}`), so
-# the runtime and ikigai-http cannot disagree. 0.4.0 is the release on ikigai-core 0.2.0;
-# `<0.5.0` (rule 5).
-ikigai-http = "0.5.0"
+# the runtime and ikigai-http cannot disagree. 0.6.0 is the release on ikigai-core 0.3.0;
+# `<0.7.0` (rule 5).
+ikigai-http = "0.6.0"
 # The seeded RNG of the deterministic WASI context. 0.10 is the line wasmtime-wasi 50 links.
 rand = { version = "0.10", default-features = false, features = ["std_rng"] }
 serde_json = "1"

@@ -16,7 +16,7 @@ categories = ["wasm"]
 include = ["src/**/*.rs", "build.rs", "wit/**/*.wit", "README.md", "../../LICENSE-*"]
 
 [dependencies]
-ikigai-runtime = { path = "../ikigai-runtime", version = "0.2.0" }
+ikigai-runtime = { path = "../ikigai-runtime", version = "0.3.0" }
 ikigai-core = { workspace = true }
 # The host keeps ikigai-module's typed session (R-D6 as amended): the jail is mounted through
 # its `ModuleTransport`/`ModuleSpace`, and a guest's bytes are converted to its types here.

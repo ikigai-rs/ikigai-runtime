@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.3.0
+
+- Move to ikigai-core 0.3.0, the scoped content store (ledger #2965): held content is scoped to
+  whoever delivered it, a principal-less hold is root's, and `ContentStore::put`/`put_replay` are
+  root-only. This is a breaking dependency change because core types appear in the runtime's
+  public API. No crate here calls `put` or `put_replay`, so no call site moves.
+- Move to ikigai-module 0.6.0 and ikigai-http 0.6.0, their releases on ikigai-core 0.3.0.
+  ikigai-module-abi stays at 0.1.0: it links no ikigai-core.
+- Bump all four workspace crates in lockstep and require ikigai-runtime 0.3.0 in the guest SDK and
+  wasmtime implementation. The WIT package remains `ikigai:runtime@0.1.0`; its interface is
+  unchanged.
+
 ## Unreleased (R3b)
 
 - **The J2 session is ikigai-module's** (R-D6 as amended, option (b)): guests build it from
