@@ -204,15 +204,20 @@ fn place(host_path: &str, root: &Path) -> Result<(PathBuf, String), String> {
     let spelled = check_jail_root_path(root)?;
     let (base, guest) = match guest_path_in_jail(host_path, &spelled) {
         Ok(guest) => (root.to_path_buf(), guest),
-        Err(refusal) => std::fs::canonicalize(root)
-            .ok()
-            .filter(|canonical| canonical.as_path() != root)
-            .and_then(|canonical| {
-                let spelled = check_jail_root_path(&canonical).ok()?;
-                let guest = guest_path_in_jail(host_path, &spelled).ok()?;
-                Some((canonical, guest))
-            })
-            .ok_or(refusal)?,
+        Err(refusal) => {
+            // ambient: fs: resolves the host-configured jail root (never the grant path) through its links, so a grant spelled the way the filesystem spells the root still places
+            #[allow(clippy::disallowed_methods)]
+            let resolved = std::fs::canonicalize(root);
+            resolved
+                .ok()
+                .filter(|canonical| canonical.as_path() != root)
+                .and_then(|canonical| {
+                    let spelled = check_jail_root_path(&canonical).ok()?;
+                    let guest = guest_path_in_jail(host_path, &spelled).ok()?;
+                    Some((canonical, guest))
+                })
+                .ok_or(refusal)?
+        }
     };
     let relative = Path::new(guest.trim_start_matches('/'));
     if !relative
@@ -226,7 +231,13 @@ fn place(host_path: &str, root: &Path) -> Result<(PathBuf, String), String> {
     let mut walked = base.clone();
     for name in relative.components() {
         walked.push(name);
-        match std::fs::symlink_metadata(&walked) {
+        // This walk checks each name and then preopens the path by name, so a link swapped in
+        // between the two is not seen. Ledger #2380 replaces it with a no-follow `openat` walk
+        // from a handle on the root, which changes this call and the root canonicalization above.
+        // ambient: fs: reads only the link bit of each component between the host-configured jail root and a granted preopen, to refuse a grant that passes through a symbolic link
+        #[allow(clippy::disallowed_methods)]
+        let meta = std::fs::symlink_metadata(&walked);
+        match meta {
             Ok(meta) if meta.file_type().is_symlink() => {
                 return Err(format!(
                     "`{}` is a symbolic link; an fs grant path must not pass through one, \
