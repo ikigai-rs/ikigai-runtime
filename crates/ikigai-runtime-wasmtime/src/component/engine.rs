@@ -224,6 +224,8 @@ impl ComponentEngine {
         // A jail root of `/` (or one that resolves to it through a link) would serve the whole
         // disk behind any fs grant: refused when the host configures it, not on the first call.
         if let Some(root) = &config.host.fs_root {
+            // ambient: fs: resolves the host-configured jail root (never a guest or request path) through its links, so a root that is a link to `/` is refused at mount
+            #[allow(clippy::disallowed_methods)]
             let canonical = std::fs::canonicalize(root).ok();
             check_jail_root_path(root)
                 .and_then(|_| {
