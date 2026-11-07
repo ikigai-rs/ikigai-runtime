@@ -7,9 +7,6 @@ exports become ikigai endpoints, its imports are bound to kernel requests, and i
 from grants. The same app runs in the jail, natively under the capability clamp, and in a page
 where a page can run it.
 
-The design record is `claude/runtime/DECISIONS.md` in `ikigai-devtools` (ledger
-[#2165](http://localhost:1062/l/default/item/2165)); this repository is R3, built to it.
-
 ## The two tiers
 
 - **The core-module tier** runs plain core modules through the `CoreEngine` trait (wasmtime
