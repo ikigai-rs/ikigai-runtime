@@ -54,3 +54,39 @@ that text follows and how to report a barrier are in [ACCESSIBILITY.md](ACCESSIB
 ## License
 
 Dual-licensed under [MIT](LICENSE-MIT) or [Apache-2.0](LICENSE-APACHE), at your option.
+
+## Pooling allocator decision (R-D7)
+
+The runtime keeps pooling **off** and reuses `InstancePre` with Wasmtime's default on-demand
+allocator. The measurement harness compares re-linking, cached `InstancePre`, and cached
+`InstancePre` with Wasmtime 50's default pool. Production configuration is unchanged.
+
+The original memory-free harness reproduced the speedup on an Apple M5 Pro (macOS arm64,
+Rust 1.99.1, release): 33.127 microseconds per call re-linking, 4.803 with `InstancePre`, and
+1.853 with pooling (5,000 calls). That alone does not establish the memory cost or the benefit
+for a Rust std guest or a guest with a large dirty memory.
+
+The extended comparison runs each guest/strategy in a fresh process, warms up, then reports
+five batches and their median, minimum, and maximum per-call times. Each call creates and
+drops a Store and WASI context, instantiates, finds and calls `add`, and checks the sum (Wasmtime 50 handles canonical post-return internally). Compilation and cached linking are outside timing; re-linking is inside
+its timed calls. The Rust std guest is `fixtures/comp-calc` with its unused lookup import
+bound to a refusing stub. The large WAT guest starts with 256 MiB and writes every 4 KiB each
+call, so the measurement includes dirty-page reset rather than just lazy reservation. It uses
+2 warmups and 5 batches of 20 calls; the other guests use 100 warmups and 5 batches of 1,000.
+These are serial allocator microbenchmarks without production fuel/epoch metering or kernel
+routing, not throughput or end-to-end latency predictions.
+
+Reproduce on Linux or macOS (install the three wasm targets used by `jail-fixtures` first):
+
+```sh
+cargo test -p ikigai-runtime-wasmtime --release --features jail-fixtures \
+  --test measure measure_instance_pre_and_pooling -- --ignored --nocapture
+```
+
+The existing Linux `jail-fixtures` CI job runs the ignored comparison in release mode in a
+separate target directory; successful test output is retained in its job log. macOS is measured
+locally with the same command. `memory` rows report process virtual size (VSZ) and resident set (RSS) in KiB at
+baseline, engine creation, compilation, warm idle, after the timed calls, with a live called
+guest, and after its Store drops. Engine-minus-baseline isolates the pool's up-front mapping
+cost; live-minus-idle helps distinguish resident guest pages from address space reserved but
+not resident. RSS is a process snapshot, not a physical-memory commitment or peak guarantee.
