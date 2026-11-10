@@ -1,0 +1,192 @@
+Source: https://github.com/ikigai-rs/ikigai-runtime/actions/runs/42739206317/job/129575811880
+Commit: 55a12f7 (temporary release driver; same timed path as the final harness)
+Host: GitHub-hosted Linux x86_64, Ubuntu 26.04.1 LTS, image ubuntu-26.04 20261101.186.1
+Toolchain: rustc 1.99.1 (58cf8f9c3 2026-10-13), Wasmtime 50.0.0
+CPU model was not captured in this run; do not compare absolute speed across hosts.
+Command: cargo test -p ikigai-runtime-wasmtime --release --features jail-fixtures --target-dir target/pooling-measurement --test measure measure_instance_pre_and_pooling -- --exact --ignored --nocapture
+
+Extracted test stdout (job labels and timestamps removed):
+running 1 test
+
+running 1 test
+case guest=trivial strategy=relink os=linux arch=x86_64 release=true
+memory stage=baseline vsz_kib=100048 rss_kib=6480
+memory stage=engine vsz_kib=100048 rss_kib=8784
+memory stage=compiled vsz_kib=370464 rss_kib=17872
+memory stage=warm-idle vsz_kib=370724 rss_kib=18636
+timing batch=0 calls=1000 us_per_call=137.172
+timing batch=1 calls=1000 us_per_call=136.497
+timing batch=2 calls=1000 us_per_call=136.703
+timing batch=3 calls=1000 us_per_call=137.605
+timing batch=4 calls=1000 us_per_call=169.083
+result guest=trivial strategy=relink median_us=137.172 min_us=136.497 max_us=169.083
+memory stage=after-calls vsz_kib=370724 rss_kib=18724
+memory stage=live-guest vsz_kib=372776 rss_kib=18728
+memory stage=after-drop vsz_kib=370724 rss_kib=18724
+test measure_instance_pre_and_pooling ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 6 filtered out; finished in 0.79s
+
+
+running 1 test
+case guest=trivial strategy=pre os=linux arch=x86_64 release=true
+memory stage=baseline vsz_kib=100048 rss_kib=6472
+memory stage=engine vsz_kib=100048 rss_kib=8800
+memory stage=compiled vsz_kib=370464 rss_kib=17812
+memory stage=warm-idle vsz_kib=370724 rss_kib=18588
+timing batch=0 calls=1000 us_per_call=21.880
+timing batch=1 calls=1000 us_per_call=21.908
+timing batch=2 calls=1000 us_per_call=21.831
+timing batch=3 calls=1000 us_per_call=21.862
+timing batch=4 calls=1000 us_per_call=21.855
+result guest=trivial strategy=pre median_us=21.862 min_us=21.831 max_us=21.908
+memory stage=after-calls vsz_kib=370724 rss_kib=18652
+memory stage=live-guest vsz_kib=372776 rss_kib=18656
+memory stage=after-drop vsz_kib=370724 rss_kib=18652
+test measure_instance_pre_and_pooling ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 6 filtered out; finished in 0.16s
+
+
+running 1 test
+case guest=trivial strategy=pool os=linux arch=x86_64 release=true
+memory stage=baseline vsz_kib=100048 rss_kib=6412
+memory stage=engine vsz_kib=4229416816 rss_kib=15036
+memory stage=compiled vsz_kib=4229687232 rss_kib=22368
+memory stage=warm-idle vsz_kib=4229687492 rss_kib=22436
+timing batch=0 calls=1000 us_per_call=7.140
+timing batch=1 calls=1000 us_per_call=4.968
+timing batch=2 calls=1000 us_per_call=4.887
+timing batch=3 calls=1000 us_per_call=4.897
+timing batch=4 calls=1000 us_per_call=4.873
+result guest=trivial strategy=pool median_us=4.897 min_us=4.873 max_us=7.140
+memory stage=after-calls vsz_kib=4229687492 rss_kib=23432
+memory stage=live-guest vsz_kib=4229687492 rss_kib=23432
+memory stage=after-drop vsz_kib=4229687492 rss_kib=23432
+test measure_instance_pre_and_pooling ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 6 filtered out; finished in 0.10s
+
+
+running 1 test
+case guest=dirty-256mib strategy=relink os=linux arch=x86_64 release=true
+memory stage=baseline vsz_kib=100048 rss_kib=6320
+memory stage=engine vsz_kib=100048 rss_kib=8768
+memory stage=compiled vsz_kib=370464 rss_kib=17912
+memory stage=warm-idle vsz_kib=370724 rss_kib=23132
+timing batch=0 calls=20 us_per_call=127523.995
+timing batch=1 calls=20 us_per_call=128283.176
+timing batch=2 calls=20 us_per_call=128829.446
+timing batch=3 calls=20 us_per_call=125762.709
+timing batch=4 calls=20 us_per_call=125899.481
+result guest=dirty-256mib strategy=relink median_us=127523.995 min_us=125762.709 max_us=128829.446
+memory stage=after-calls vsz_kib=370724 rss_kib=23232
+memory stage=live-guest vsz_kib=4632616 rss_kib=285380
+memory stage=after-drop vsz_kib=370724 rss_kib=23232
+test measure_instance_pre_and_pooling ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 6 filtered out; finished in 13.17s
+
+
+running 1 test
+case guest=dirty-256mib strategy=pre os=linux arch=x86_64 release=true
+memory stage=baseline vsz_kib=100048 rss_kib=6440
+memory stage=engine vsz_kib=100048 rss_kib=8704
+memory stage=compiled vsz_kib=370464 rss_kib=17796
+memory stage=warm-idle vsz_kib=370724 rss_kib=23068
+timing batch=0 calls=20 us_per_call=124809.231
+timing batch=1 calls=20 us_per_call=126915.550
+timing batch=2 calls=20 us_per_call=126063.960
+timing batch=3 calls=20 us_per_call=125507.151
+timing batch=4 calls=20 us_per_call=125964.648
+result guest=dirty-256mib strategy=pre median_us=125964.648 min_us=124809.231 max_us=126915.550
+memory stage=after-calls vsz_kib=370724 rss_kib=23144
+memory stage=live-guest vsz_kib=4632616 rss_kib=285292
+memory stage=after-drop vsz_kib=370724 rss_kib=23144
+test measure_instance_pre_and_pooling ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 6 filtered out; finished in 13.03s
+
+
+running 1 test
+case guest=dirty-256mib strategy=pool os=linux arch=x86_64 release=true
+memory stage=baseline vsz_kib=100048 rss_kib=6548
+memory stage=engine vsz_kib=4229416816 rss_kib=15044
+memory stage=compiled vsz_kib=4229687232 rss_kib=22684
+memory stage=warm-idle vsz_kib=4229687492 rss_kib=23696
+timing batch=0 calls=20 us_per_call=127344.480
+timing batch=1 calls=20 us_per_call=128157.342
+timing batch=2 calls=20 us_per_call=128902.004
+timing batch=3 calls=20 us_per_call=128560.526
+timing batch=4 calls=20 us_per_call=129209.703
+result guest=dirty-256mib strategy=pool median_us=128560.526 min_us=127344.480 max_us=129209.703
+memory stage=after-calls vsz_kib=4229687492 rss_kib=23772
+memory stage=live-guest vsz_kib=4229687492 rss_kib=285916
+memory stage=after-drop vsz_kib=4229687492 rss_kib=23772
+test measure_instance_pre_and_pooling ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 6 filtered out; finished in 13.31s
+
+
+running 1 test
+case guest=rust-std strategy=relink os=linux arch=x86_64 release=true
+memory stage=baseline vsz_kib=100048 rss_kib=6456
+memory stage=engine vsz_kib=100048 rss_kib=8720
+memory stage=compiled vsz_kib=370636 rss_kib=23324
+memory stage=warm-idle vsz_kib=370896 rss_kib=28372
+timing batch=0 calls=1000 us_per_call=232.330
+timing batch=1 calls=1000 us_per_call=244.990
+timing batch=2 calls=1000 us_per_call=240.721
+timing batch=3 calls=1000 us_per_call=233.725
+timing batch=4 calls=1000 us_per_call=236.623
+result guest=rust-std strategy=relink median_us=236.623 min_us=232.330 max_us=244.990
+memory stage=after-calls vsz_kib=370896 rss_kib=28448
+memory stage=live-guest vsz_kib=4632788 rss_kib=28460
+memory stage=after-drop vsz_kib=370896 rss_kib=28448
+test measure_instance_pre_and_pooling ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 6 filtered out; finished in 1.29s
+
+
+running 1 test
+case guest=rust-std strategy=pre os=linux arch=x86_64 release=true
+memory stage=baseline vsz_kib=100048 rss_kib=6248
+memory stage=engine vsz_kib=100048 rss_kib=8744
+memory stage=compiled vsz_kib=370636 rss_kib=23476
+memory stage=warm-idle vsz_kib=370896 rss_kib=27476
+timing batch=0 calls=1000 us_per_call=103.460
+timing batch=1 calls=1000 us_per_call=90.970
+timing batch=2 calls=1000 us_per_call=89.992
+timing batch=3 calls=1000 us_per_call=114.544
+timing batch=4 calls=1000 us_per_call=87.672
+result guest=rust-std strategy=pre median_us=90.970 min_us=87.672 max_us=114.544
+memory stage=after-calls vsz_kib=370896 rss_kib=28524
+memory stage=live-guest vsz_kib=4632788 rss_kib=28536
+memory stage=after-drop vsz_kib=370896 rss_kib=28524
+test measure_instance_pre_and_pooling ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 6 filtered out; finished in 0.58s
+
+
+running 1 test
+case guest=rust-std strategy=pool os=linux arch=x86_64 release=true
+memory stage=baseline vsz_kib=100048 rss_kib=6512
+memory stage=engine vsz_kib=4229416816 rss_kib=14964
+memory stage=compiled vsz_kib=4229687404 rss_kib=28220
+memory stage=warm-idle vsz_kib=4229687664 rss_kib=28288
+timing batch=0 calls=1000 us_per_call=33.513
+timing batch=1 calls=1000 us_per_call=33.073
+timing batch=2 calls=1000 us_per_call=32.991
+timing batch=3 calls=1000 us_per_call=32.958
+timing batch=4 calls=1000 us_per_call=32.952
+result guest=rust-std strategy=pool median_us=32.991 min_us=32.952 max_us=33.513
+memory stage=after-calls vsz_kib=4229687664 rss_kib=28356
+memory stage=live-guest vsz_kib=4229687664 rss_kib=28368
+memory stage=after-drop vsz_kib=4229687664 rss_kib=28356
+test measure_instance_pre_and_pooling ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 6 filtered out; finished in 0.27s
+
+test measure_instance_pre_and_pooling ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 6 filtered out; finished in 42.72s

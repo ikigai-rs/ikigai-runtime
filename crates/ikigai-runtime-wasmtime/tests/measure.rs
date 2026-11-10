@@ -1,8 +1,8 @@
 //! Measurement harnesses for the "Still to measure (R3 owns)" items (R-D7, R-D10). Run them with
 //! `cargo test -p ikigai-runtime-wasmtime --release --test measure -- --ignored --nocapture`
 //! (add `--features jail-fixtures` for the std-guest harness). They are `#[ignore]`d so they never
-//! gate ordinary tests: timings are not assertions. Linux fixture CI also runs the allocator
-//! comparison in release mode; its recorded results and decision are in the runtime README.
+//! gate CI: timings are not assertions. Recorded allocator results and the decision are in
+//! the runtime README.
 //!
 //! Still pending, by scope: waffle's state, coverage and cost, and Wizer's component support
 //! (R-D10). Measured elsewhere: `package-docs` retention (R-D4) is `tests/component.rs`'s
@@ -169,6 +169,22 @@ async fn measure_instance_pre_and_pooling() {
     // A fresh process per guest/strategy avoids carrying allocator and JIT high-water marks
     // from one case into the next. The child runs only this ignored test.
     let Ok(guest) = std::env::var("IKIGAI_POOL_GUEST") else {
+        let metadata: &[(&str, &[&str])] = if cfg!(target_os = "linux") {
+            &[("uname", &["-a"]), ("rustc", &["-Vv"]), ("lscpu", &[])]
+        } else {
+            &[
+                ("uname", &["-a"]),
+                ("rustc", &["-Vv"]),
+                ("sysctl", &["-n", "machdep.cpu.brand_string"]),
+            ]
+        };
+        for (program, args) in metadata {
+            assert!(Command::new(program)
+                .args(*args)
+                .status()
+                .unwrap()
+                .success());
+        }
         let mut guests = vec!["trivial", "dirty-256mib"];
         if cfg!(feature = "jail-fixtures") {
             guests.push("rust-std");
@@ -398,52 +414,5 @@ async fn measure_std_component_call_cost_through_the_kernel() {
     println!(
         "component (Rust std, wasip2) through the kernel: {n} calls in {elapsed:?} = {:?}/call",
         elapsed / n
-    );
-}
-
-/// The existing Linux fixture CI lane has all guest targets installed. Run the ignored
-/// allocator comparison in release mode there, rather than recording misleading debug times.
-/// The separate target directory avoids contending with the outer Cargo invocation. Local
-/// fixture tests remain quick; the explicit release command above works on either platform.
-#[cfg(all(feature = "jail-fixtures", target_os = "linux"))]
-#[test]
-fn pooling_release_evidence_in_fixture_ci() {
-    use std::io::Write;
-    use std::process::Command;
-
-    if std::env::var("GITHUB_ACTIONS").as_deref() != Ok("true") {
-        return;
-    }
-    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
-    let output = Command::new(env!("CARGO"))
-        .current_dir(&root)
-        .args([
-            "test",
-            "-p",
-            "ikigai-runtime-wasmtime",
-            "--release",
-            "--features",
-            "jail-fixtures",
-            "--target-dir",
-            "target/pooling-measurement",
-            "--test",
-            "measure",
-            "measure_instance_pre_and_pooling",
-            "--",
-            "--exact",
-            "--ignored",
-            "--nocapture",
-        ])
-        .env_remove("CARGO_TARGET_DIR")
-        .output()
-        .unwrap();
-    // Write directly so the successful test's evidence remains visible in CI logs even
-    // when the outer test harness captures println! output.
-    let mut stdout = std::io::stdout().lock();
-    stdout.write_all(&output.stdout).unwrap();
-    stdout.write_all(&output.stderr).unwrap();
-    assert!(
-        output.status.success(),
-        "release allocator measurement failed"
     );
 }

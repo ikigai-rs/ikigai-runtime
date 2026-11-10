@@ -1,0 +1,11 @@
+    Finished `release` profile [optimized] target(s) in 0.09s
+     Running tests/measure.rs (target/release/deps/measure-02d1061b8bc5b0f5)
+
+running 1 test
+wasmtime re-link per call: 5000 calls in 165.635375ms = 33.127µs/call
+wasmtime InstancePre: 5000 calls in 24.01775ms = 4.803µs/call
+wasmtime InstancePre + pooling: 5000 calls in 9.268625ms = 1.853µs/call
+test measure_instance_pre_and_pooling ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 4 filtered out; finished in 0.21s
+
