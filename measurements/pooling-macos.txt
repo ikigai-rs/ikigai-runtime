@@ -1,0 +1,198 @@
+   Compiling ikigai-runtime-wasmtime v0.3.0 (/Users/agent/work/ikigai-runtime/item-3340/crates/ikigai-runtime-wasmtime)
+    Finished `release` profile [optimized] target(s) in 4.18s
+     Running tests/measure.rs (target/release/deps/measure-a24b63f300d25db1)
+
+running 1 test
+Darwin more 27.2.0 Darwin Kernel Version 27.2.0: Wed Oct 14 23:47:58 PDT 2026; root:xnu-13432.41.4~25/RELEASE_ARM64_T6050 arm64
+rustc 1.99.1 (58cf8f9c3 2026-10-13)
+binary: rustc
+commit-hash: 58cf8f9c35b355199727627d07ae34a4e2846d67
+commit-date: 2026-10-13
+host: aarch64-apple-darwin
+release: 1.99.1
+LLVM version: 23.1.1
+Apple M5 Pro
+
+running 1 test
+case guest=trivial strategy=relink os=macos arch=aarch64 release=true
+memory stage=baseline vsz_kib=488817904 rss_kib=3744
+memory stage=engine vsz_kib=488820144 rss_kib=4592
+memory stage=compiled vsz_kib=488860560 rss_kib=11888
+memory stage=warm-idle vsz_kib=488860560 rss_kib=12864
+timing batch=0 calls=1000 us_per_call=37.903
+timing batch=1 calls=1000 us_per_call=35.348
+timing batch=2 calls=1000 us_per_call=34.207
+timing batch=3 calls=1000 us_per_call=33.990
+timing batch=4 calls=1000 us_per_call=33.890
+result guest=trivial strategy=relink median_us=34.207 min_us=33.890 max_us=37.903
+memory stage=after-calls vsz_kib=488860560 rss_kib=13120
+memory stage=live-guest vsz_kib=488862624 rss_kib=13136
+memory stage=after-drop vsz_kib=488860560 rss_kib=13120
+test measure_instance_pre_and_pooling ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 5 filtered out; finished in 0.20s
+
+
+running 1 test
+case guest=trivial strategy=pre os=macos arch=aarch64 release=true
+memory stage=baseline vsz_kib=488817168 rss_kib=3728
+memory stage=engine vsz_kib=488819408 rss_kib=4592
+memory stage=compiled vsz_kib=488859824 rss_kib=11968
+memory stage=warm-idle vsz_kib=488859824 rss_kib=12736
+timing batch=0 calls=1000 us_per_call=5.660
+timing batch=1 calls=1000 us_per_call=5.574
+timing batch=2 calls=1000 us_per_call=5.450
+timing batch=3 calls=1000 us_per_call=5.615
+timing batch=4 calls=1000 us_per_call=5.539
+result guest=trivial strategy=pre median_us=5.574 min_us=5.450 max_us=5.660
+memory stage=after-calls vsz_kib=488859824 rss_kib=12736
+memory stage=live-guest vsz_kib=488861888 rss_kib=12752
+memory stage=after-drop vsz_kib=488859824 rss_kib=12736
+test measure_instance_pre_and_pooling ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 5 filtered out; finished in 0.04s
+
+
+running 1 test
+case guest=trivial strategy=pool os=macos arch=aarch64 release=true
+memory stage=baseline vsz_kib=488817536 rss_kib=3728
+memory stage=engine vsz_kib=4718148544 rss_kib=5136
+memory stage=compiled vsz_kib=4718188960 rss_kib=12320
+memory stage=warm-idle vsz_kib=4718188960 rss_kib=13104
+timing batch=0 calls=1000 us_per_call=2.031
+timing batch=1 calls=1000 us_per_call=2.060
+timing batch=2 calls=1000 us_per_call=2.024
+timing batch=3 calls=1000 us_per_call=2.049
+timing batch=4 calls=1000 us_per_call=1.954
+result guest=trivial strategy=pool median_us=2.031 min_us=1.954 max_us=2.060
+memory stage=after-calls vsz_kib=4718188960 rss_kib=13136
+memory stage=live-guest vsz_kib=4718188960 rss_kib=13136
+memory stage=after-drop vsz_kib=4718188960 rss_kib=13136
+test measure_instance_pre_and_pooling ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 5 filtered out; finished in 0.03s
+
+
+running 1 test
+case guest=dirty-256mib strategy=relink os=macos arch=aarch64 release=true
+memory stage=baseline vsz_kib=488817680 rss_kib=3744
+memory stage=engine vsz_kib=488819920 rss_kib=4592
+memory stage=compiled vsz_kib=488860336 rss_kib=12432
+memory stage=warm-idle vsz_kib=488860336 rss_kib=13088
+timing batch=0 calls=20 us_per_call=11026.604
+timing batch=1 calls=20 us_per_call=10528.587
+timing batch=2 calls=20 us_per_call=10380.379
+timing batch=3 calls=20 us_per_call=10260.600
+timing batch=4 calls=20 us_per_call=10199.144
+result guest=dirty-256mib strategy=relink median_us=10380.379 min_us=10199.144 max_us=11026.604
+memory stage=after-calls vsz_kib=488860336 rss_kib=13280
+memory stage=live-guest vsz_kib=493122240 rss_kib=275440
+memory stage=after-drop vsz_kib=488860336 rss_kib=13280
+test measure_instance_pre_and_pooling ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 5 filtered out; finished in 1.09s
+
+
+running 1 test
+case guest=dirty-256mib strategy=pre os=macos arch=aarch64 release=true
+memory stage=baseline vsz_kib=488816960 rss_kib=3728
+memory stage=engine vsz_kib=488819200 rss_kib=4592
+memory stage=compiled vsz_kib=488859616 rss_kib=12368
+memory stage=warm-idle vsz_kib=488859616 rss_kib=12928
+timing batch=0 calls=20 us_per_call=10331.675
+timing batch=1 calls=20 us_per_call=10049.469
+timing batch=2 calls=20 us_per_call=10215.677
+timing batch=3 calls=20 us_per_call=10222.035
+timing batch=4 calls=20 us_per_call=10144.175
+result guest=dirty-256mib strategy=pre median_us=10215.677 min_us=10049.469 max_us=10331.675
+memory stage=after-calls vsz_kib=488859616 rss_kib=13088
+memory stage=live-guest vsz_kib=493121520 rss_kib=275248
+memory stage=after-drop vsz_kib=488859616 rss_kib=13088
+test measure_instance_pre_and_pooling ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 5 filtered out; finished in 1.06s
+
+
+running 1 test
+case guest=dirty-256mib strategy=pool os=macos arch=aarch64 release=true
+memory stage=baseline vsz_kib=488817392 rss_kib=3744
+memory stage=engine vsz_kib=4718148400 rss_kib=5136
+memory stage=compiled vsz_kib=4718188816 rss_kib=12768
+memory stage=warm-idle vsz_kib=4718188816 rss_kib=13344
+timing batch=0 calls=20 us_per_call=10360.154
+timing batch=1 calls=20 us_per_call=10170.371
+timing batch=2 calls=20 us_per_call=10345.446
+timing batch=3 calls=20 us_per_call=10185.117
+timing batch=4 calls=20 us_per_call=10515.071
+result guest=dirty-256mib strategy=pool median_us=10345.446 min_us=10170.371 max_us=10515.071
+memory stage=after-calls vsz_kib=4718188816 rss_kib=13520
+memory stage=live-guest vsz_kib=4718188816 rss_kib=275664
+memory stage=after-drop vsz_kib=4718188816 rss_kib=13520
+test measure_instance_pre_and_pooling ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 5 filtered out; finished in 1.08s
+
+
+running 1 test
+case guest=rust-std strategy=relink os=macos arch=aarch64 release=true
+memory stage=baseline vsz_kib=488817024 rss_kib=3728
+memory stage=engine vsz_kib=488819264 rss_kib=4592
+memory stage=compiled vsz_kib=488859856 rss_kib=24912
+memory stage=warm-idle vsz_kib=488859856 rss_kib=25456
+timing batch=0 calls=1000 us_per_call=49.588
+timing batch=1 calls=1000 us_per_call=47.800
+timing batch=2 calls=1000 us_per_call=47.031
+timing batch=3 calls=1000 us_per_call=47.216
+timing batch=4 calls=1000 us_per_call=47.245
+result guest=rust-std strategy=relink median_us=47.245 min_us=47.031 max_us=49.588
+memory stage=after-calls vsz_kib=488859856 rss_kib=25712
+memory stage=live-guest vsz_kib=493121760 rss_kib=25744
+memory stage=after-drop vsz_kib=488859856 rss_kib=25712
+test measure_instance_pre_and_pooling ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 5 filtered out; finished in 0.26s
+
+
+running 1 test
+case guest=rust-std strategy=pre os=macos arch=aarch64 release=true
+memory stage=baseline vsz_kib=488817360 rss_kib=3744
+memory stage=engine vsz_kib=488819600 rss_kib=4592
+memory stage=compiled vsz_kib=488860192 rss_kib=24432
+memory stage=warm-idle vsz_kib=488860192 rss_kib=24976
+timing batch=0 calls=1000 us_per_call=16.703
+timing batch=1 calls=1000 us_per_call=16.238
+timing batch=2 calls=1000 us_per_call=15.792
+timing batch=3 calls=1000 us_per_call=15.591
+timing batch=4 calls=1000 us_per_call=15.545
+result guest=rust-std strategy=pre median_us=15.792 min_us=15.545 max_us=16.703
+memory stage=after-calls vsz_kib=488860192 rss_kib=25056
+memory stage=live-guest vsz_kib=493122096 rss_kib=25088
+memory stage=after-drop vsz_kib=488860192 rss_kib=25056
+test measure_instance_pre_and_pooling ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 5 filtered out; finished in 0.10s
+
+
+running 1 test
+case guest=rust-std strategy=pool os=macos arch=aarch64 release=true
+memory stage=baseline vsz_kib=488817424 rss_kib=3728
+memory stage=engine vsz_kib=4718148432 rss_kib=5136
+memory stage=compiled vsz_kib=4718189024 rss_kib=25056
+memory stage=warm-idle vsz_kib=4718189024 rss_kib=25616
+timing batch=0 calls=1000 us_per_call=15.395
+timing batch=1 calls=1000 us_per_call=15.284
+timing batch=2 calls=1000 us_per_call=15.242
+timing batch=3 calls=1000 us_per_call=14.972
+timing batch=4 calls=1000 us_per_call=15.452
+result guest=rust-std strategy=pool median_us=15.284 min_us=14.972 max_us=15.452
+memory stage=after-calls vsz_kib=4718189024 rss_kib=25664
+memory stage=live-guest vsz_kib=4718189024 rss_kib=25696
+memory stage=after-drop vsz_kib=4718189024 rss_kib=25664
+test measure_instance_pre_and_pooling ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 5 filtered out; finished in 0.10s
+
+test measure_instance_pre_and_pooling ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 5 filtered out; finished in 4.04s
+
