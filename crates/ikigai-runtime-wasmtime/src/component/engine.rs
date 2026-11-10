@@ -1,6 +1,7 @@
 //! The component engine: compile and cache components, mount one as an app, and run one call in
 //! a fresh `Store` with the WASI its world and grants allow.
 
+use crate::compiled_cache::{CacheOutcome, CompiledCache, Origin};
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::sync::{Arc, Mutex};
 use std::time::Instant;
@@ -138,6 +139,8 @@ pub(crate) struct EngineInner {
     /// The compiled-form cache, keyed by artifact digest and the engine-compatibility hash
     /// (R-D7). In memory; a digest key never goes stale, so it only needs eviction.
     compiled: Mutex<HashMap<CompiledKey, Component>>,
+    /// The host's own on-disk cache, behind the in-memory one: what a restart starts from.
+    disk: Option<CompiledCache>,
 }
 
 impl ComponentEngine {
@@ -158,8 +161,18 @@ impl ComponentEngine {
                 metering,
                 _ticker: ticker,
                 compiled: Mutex::new(HashMap::new()),
+                disk: None,
             }),
         })
+    }
+
+    /// Keep compiled forms in `cache`, the host's own directory, behind the in-memory cache, so a
+    /// restarted host loads them instead of compiling (R-D7). Call before the engine is cloned.
+    pub fn with_compiled_cache(mut self, cache: CompiledCache) -> Self {
+        Arc::get_mut(&mut self.inner)
+            .expect("with_compiled_cache is called before the engine is cloned")
+            .disk = Some(cache);
+        self
     }
 
     /// The engine-compatibility hash compiled forms are keyed by (R-D7).
@@ -168,8 +181,18 @@ impl ComponentEngine {
     }
 
     /// Compile an artifact, or take it from the cache by digest and compatibility hash. A
-    /// precompiled form is never deserialized from anywhere but this cache (R-D7).
+    /// precompiled form is never deserialized from anywhere but this host's own caches (R-D7).
     pub fn compile(&self, artifact: &Artifact) -> Result<Component, EngineError> {
+        self.compile_traced(artifact)
+            .map(|(component, _)| component)
+    }
+
+    /// [`compile`](Self::compile), saying where the compiled form came from: memory, this host's
+    /// on-disk cache, or a compile, with a note for any entry on disk that was rejected.
+    pub fn compile_traced(
+        &self,
+        artifact: &Artifact,
+    ) -> Result<(Component, CacheOutcome), EngineError> {
         let key = artifact.compiled_key(&self.compat_hash());
         if let Some(component) = self
             .inner
@@ -178,20 +201,35 @@ impl ComponentEngine {
             .expect("the compiled cache")
             .get(&key)
         {
-            return Ok(component.clone());
+            return Ok((component.clone(), CacheOutcome::new(Origin::Memory)));
         }
         // Compiled outside the lock, so one large compile does not stall every other mount; two
         // racing compiles of one digest produce the same form, and the second insert is a no-op
         // in effect.
-        let component = Component::new(&self.inner.engine, artifact.bytes())
-            .map_err(|e| EngineError::Compile(format!("{e:#}")))?;
+        let engine = &self.inner.engine;
+        let compile = || {
+            Component::new(engine, artifact.bytes())
+                .map_err(|e| EngineError::Compile(format!("{e:#}")))
+        };
+        let (component, outcome) = match &self.inner.disk {
+            None => (compile()?, CacheOutcome::new(Origin::Compiled)),
+            Some(disk) => disk.load_or_compile(
+                &key,
+                // SAFETY: `load_or_compile` hands over only the body of an entry this host's
+                // cache wrote after compiling, under an identical digest and compatibility
+                // hash, whose blake3 hash checks out (R-D7).
+                |body| unsafe { Component::deserialize(engine, body) },
+                compile,
+                |component| component.serialize(),
+            )?,
+        };
         self.inner
             .compiled
             .lock()
             .expect("the compiled cache")
             .entry(key)
             .or_insert_with(|| component.clone());
-        Ok(component)
+        Ok((component, outcome))
     }
 
     /// How many compiled forms the cache holds.
