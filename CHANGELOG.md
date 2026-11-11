@@ -1,5 +1,17 @@
 # Changelog
 
+## Unreleased
+
+- **Compiled forms on disk** (R-D7, ledger #3339): `WasmtimeCoreEngine::with_compiled_cache` and
+  `ComponentEngine::with_compiled_cache` take a `CompiledCache`, the host's own directory. After
+  compiling, the engine writes the `.cwasm` to `{dir}/{engine}/{digest}.cwasm`; a restarted host
+  loads it instead of compiling. An entry is deserialized only if its header names the identical
+  artifact digest and compatibility hash and its body matches the blake3 hash it records; a
+  corrupt or mismatched entry is compiled again, overwritten, and reported in the
+  `CacheOutcome` that `compile_traced` returns. No API loads a `.cwasm` from anywhere else.
+  Measured in `measurements/restart-macos.txt`: the first answer after a restart of a Rust std
+  component drops from 9.8 ms to 1.3 ms (median of 7, release, Apple silicon).
+
 ## 0.3.0
 
 - Move to ikigai-core 0.3.0, the scoped content store (ledger #2965): held content is scoped to

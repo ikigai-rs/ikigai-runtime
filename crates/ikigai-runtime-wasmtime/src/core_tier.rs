@@ -12,7 +12,7 @@ use ikigai_runtime::session::{
 };
 use ikigai_runtime::space::Convention;
 use ikigai_runtime::{
-    loader::{ArtifactDigest, EngineCompatHash},
+    loader::{ArtifactDigest, CompiledKey, EngineCompatHash},
     Call, CoreEngine, EngineError, HostResolver, Invoked, Limits, Output, Value,
 };
 use wasmtime::{Caller, Engine, Extern, Instance, Linker, Module, ResourceLimiter, Store, Val};
@@ -21,6 +21,7 @@ use crate::budget::{
     apply_budget, check_metering, consumed_of, engine_for, trap_to_error, werr, EpochTicker,
     MemLimiter, Metering,
 };
+use crate::compiled_cache::{CacheOutcome, CompiledCache, Origin};
 
 /// A compiled core module, cacheable by digest and engine-compatibility hash (R-D7).
 pub struct Compiled {
@@ -61,6 +62,7 @@ pub struct WasmtimeCoreEngine {
     ceiling: Limits,
     metering: Metering,
     _ticker: EpochTicker,
+    disk: Option<CompiledCache>,
 }
 
 impl WasmtimeCoreEngine {
@@ -82,7 +84,44 @@ impl WasmtimeCoreEngine {
             ceiling,
             metering,
             _ticker: ticker,
+            disk: None,
         })
+    }
+
+    /// Keep compiled forms in `cache`, the host's own directory, so a restarted host loads them
+    /// instead of compiling (R-D7).
+    pub fn with_compiled_cache(mut self, cache: CompiledCache) -> Self {
+        self.disk = Some(cache);
+        self
+    }
+
+    /// Compile module bytes, through the on-disk cache when there is one, and say where the
+    /// compiled form came from. [`CoreEngine::compile`] is this without the outcome.
+    pub fn compile_traced(&self, wasm: &[u8]) -> Result<(Compiled, CacheOutcome), EngineError> {
+        let digest = ArtifactDigest::of(wasm);
+        let compile =
+            || Module::new(&self.engine, wasm).map_err(|e| EngineError::Compile(format!("{e:#}")));
+        let (module, outcome) = match &self.disk {
+            None => (compile()?, CacheOutcome::new(Origin::Compiled)),
+            Some(disk) => disk.load_or_compile(
+                &CompiledKey::new(digest.clone(), self.compat_hash()),
+                // SAFETY: `load_or_compile` hands over only the body of an entry this host's
+                // cache wrote after compiling, under an identical digest and compatibility
+                // hash, whose blake3 hash checks out (R-D7).
+                |body| unsafe { Module::deserialize(&self.engine, body) },
+                compile,
+                |module| module.serialize(),
+            )?,
+        };
+        let exports = module.exports().map(|e| e.name().to_string()).collect();
+        Ok((
+            Compiled {
+                module,
+                exports,
+                digest,
+            },
+            outcome,
+        ))
     }
 
     /// The engine-compatibility hash a compiled form is keyed by (R-D7), as a stable string.
@@ -287,14 +326,7 @@ impl CoreEngine for WasmtimeCoreEngine {
     type Compiled = Compiled;
 
     fn compile(&self, wasm: &[u8]) -> Result<Compiled, EngineError> {
-        let module =
-            Module::new(&self.engine, wasm).map_err(|e| EngineError::Compile(format!("{e:#}")))?;
-        let exports = module.exports().map(|e| e.name().to_string()).collect();
-        Ok(Compiled {
-            module,
-            exports,
-            digest: ArtifactDigest::of(wasm),
-        })
+        self.compile_traced(wasm).map(|(compiled, _)| compiled)
     }
 
     async fn invoke(

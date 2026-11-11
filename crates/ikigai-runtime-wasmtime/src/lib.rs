@@ -15,6 +15,9 @@
 //! `urn:runtime:app:{app}:…` (R-D4) and each import bound to a kernel request at run time under
 //! the caller's capability (R-D5).
 //!
+//! Either tier keeps its compiled forms on disk when given a [`CompiledCache`]: the first call
+//! after a restart deserializes the form this host wrote instead of compiling (R-D7).
+//!
 //! Budgets (fuel · epoch · memory) come from [`Limits`](ikigai_runtime::Limits) as the meet of
 //! the engine's host ceiling and the caller's grant; the error mapping is R-D10 (fuel and memory
 //! → `OverBudget`, never transient; a budget deadline → `OverBudget`, a host deadline →
@@ -24,12 +27,14 @@
 
 mod bridge;
 mod budget;
+pub mod compiled_cache;
 pub mod component;
 mod core_tier;
 mod transport;
 pub mod wasi;
 
 pub use budget::Metering;
+pub use compiled_cache::{CacheOutcome, CompiledCache, Origin};
 pub use core_tier::{detect_convention, Compiled, WasmtimeCoreEngine};
 pub use ikigai_runtime::engine::Invoked;
 pub use transport::JailTransport;

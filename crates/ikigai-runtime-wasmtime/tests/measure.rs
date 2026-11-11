@@ -416,3 +416,159 @@ async fn measure_std_component_call_cost_through_the_kernel() {
         elapsed / n
     );
 }
+
+/// The first call after a restart (R-D7), with and without the on-disk compiled-form cache. Each
+/// sample is a fresh process — a real restart, nothing in memory — timing engine creation, compile
+/// (or load from the cache) and the first call. `nocache` compiles every time; `warm` loads the
+/// entry an earlier process wrote. Run in release; add `--features jail-fixtures` for the Rust std
+/// guests (a WASI p1 core module and a wasip2 component).
+#[tokio::test]
+#[ignore = "restart harness: run with --release [--features jail-fixtures] -- --ignored --nocapture"]
+async fn measure_first_call_after_restart() {
+    use ikigai_core::{ArgRef, Fallback, Iri, Kernel, Request, Space, Verb};
+    use ikigai_runtime_wasmtime::{CompiledCache, Origin};
+    use std::process::Command;
+
+    let Ok(guest) = std::env::var("IKIGAI_RESTART_GUEST") else {
+        let mut guests = vec!["core-wat", "component-wat"];
+        if cfg!(feature = "jail-fixtures") {
+            guests.extend(["core-std-p1", "component-std"]);
+        }
+        let dir = std::env::temp_dir().join(format!("ikigai-restart-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        println!(
+            "restart os={} arch={} release={}",
+            std::env::consts::OS,
+            std::env::consts::ARCH,
+            !cfg!(debug_assertions)
+        );
+        for guest in guests {
+            for mode in ["nocache", "fill", "warm"] {
+                // One fill run writes the entry; every other run is a sample.
+                let runs = if mode == "fill" { 1 } else { 7 };
+                for _ in 0..runs {
+                    assert!(Command::new(std::env::current_exe().unwrap())
+                        .args([
+                            "--exact",
+                            "measure_first_call_after_restart",
+                            "--ignored",
+                            "--nocapture",
+                        ])
+                        .env("IKIGAI_RESTART_GUEST", guest)
+                        .env("IKIGAI_RESTART_MODE", mode)
+                        .env("IKIGAI_RESTART_DIR", &dir)
+                        .status()
+                        .unwrap()
+                        .success());
+                }
+            }
+        }
+        let _ = std::fs::remove_dir_all(&dir);
+        return;
+    };
+    let mode = std::env::var("IKIGAI_RESTART_MODE").unwrap();
+    let cache = (mode != "nocache")
+        .then(|| CompiledCache::new(std::env::var("IKIGAI_RESTART_DIR").unwrap()));
+    // Timed from engine creation to the first answer; the engine is dropped after the clock
+    // stops (its epoch ticker's join is not start-up cost).
+    let start = Instant::now();
+    let (origin, compiled_at, answered_at, _engine) = match guest.as_str() {
+        "core-wat" | "core-std-p1" => {
+            let mut engine = WasmtimeCoreEngine::new(Limits::fuel(u64::MAX)).unwrap();
+            if let Some(cache) = cache {
+                engine = engine.with_compiled_cache(cache);
+            }
+            let (bytes, call): (&[u8], Call<'_>) = if guest == "core-wat" {
+                (
+                    ADD.as_bytes(),
+                    Call::Numeric {
+                        export: "add",
+                        args: &[Value::I32(2), Value::I32(3)],
+                    },
+                )
+            } else {
+                #[cfg(feature = "jail-fixtures")]
+                let bytes: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/p1cmd.wasm"));
+                #[cfg(not(feature = "jail-fixtures"))]
+                let bytes: &[u8] = panic_without_fixtures();
+                (bytes, Call::Command { stdin: b"hello" })
+            };
+            let (compiled, outcome) = engine.compile_traced(bytes).unwrap();
+            let compiled_at = start.elapsed();
+            engine
+                .invoke(&compiled, call, &Limits::fuel(1 << 32), Arc::new(NoHost))
+                .await
+                .unwrap();
+            (
+                outcome,
+                compiled_at,
+                start.elapsed(),
+                Box::new(engine) as Box<dyn std::any::Any>,
+            )
+        }
+        _ => {
+            let mut engine = ComponentEngine::new(Limits::fuel(u64::MAX)).unwrap();
+            if let Some(cache) = cache {
+                engine = engine.with_compiled_cache(cache);
+            }
+            let (artifact, config, target) = if guest == "component-wat" {
+                (
+                    Artifact::from_bytes(MATH.as_bytes().to_vec()),
+                    AppConfig::new("math", World::Endpoint),
+                    "urn:runtime:app:math:math:add",
+                )
+            } else {
+                #[cfg(feature = "jail-fixtures")]
+                let bytes: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/comp_calc.wasm"));
+                #[cfg(not(feature = "jail-fixtures"))]
+                let bytes: &[u8] = panic_without_fixtures();
+                (
+                    Artifact::from_bytes(bytes.to_vec()),
+                    AppConfig::new("calc", World::Endpoint).bindings(
+                        ikigai_runtime_wasmtime::component::ImportBindings::new()
+                            .bind("acme:calc/lookup.find", Verb::Source, "urn:geo:find")
+                            .unwrap(),
+                    ),
+                    "urn:runtime:app:calc:calc:add",
+                )
+            };
+            let (_, outcome) = engine.compile_traced(&artifact).unwrap();
+            let compiled_at = start.elapsed();
+            let space = engine
+                .mount(&artifact, config.limits(Limits::fuel(50_000_000)))
+                .await
+                .unwrap();
+            let kernel = Kernel::new(Arc::new(Fallback::new(vec![
+                Arc::new(space) as Arc<dyn Space>
+            ])));
+            let request = Request::new(Verb::Source, Iri::parse(target).unwrap())
+                .with_arg("a", ArgRef::Inline(b"2".to_vec()))
+                .with_arg("b", ArgRef::Inline(b"3".to_vec()));
+            kernel.issue(request, &Capability::root()).await.unwrap();
+            (
+                outcome,
+                compiled_at,
+                start.elapsed(),
+                Box::new((engine, kernel)) as Box<dyn std::any::Any>,
+            )
+        }
+    };
+    let expected = if mode == "warm" {
+        Origin::Disk
+    } else {
+        Origin::Compiled
+    };
+    assert_eq!(origin.origin, expected, "{origin}");
+    assert!(origin.notes.is_empty(), "{origin}");
+    println!(
+        "restart guest={guest} mode={mode} compile_or_load_us={:.0} first_answer_us={:.0}",
+        compiled_at.as_secs_f64() * 1e6,
+        answered_at.as_secs_f64() * 1e6
+    );
+}
+
+/// The std guests are built only under `jail-fixtures`; the harness never asks for them without it.
+#[cfg(not(feature = "jail-fixtures"))]
+fn panic_without_fixtures() -> &'static [u8] {
+    panic!("the Rust std guests need --features jail-fixtures")
+}
