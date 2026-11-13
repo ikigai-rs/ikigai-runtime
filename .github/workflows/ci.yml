@@ -72,7 +72,7 @@ jobs:
       - name: clippy (js-fixtures)
         run: cargo clippy -p ikigai-runtime-wasmtime --all-targets --features js-fixtures -- -D warnings
       - name: test (js-fixtures)
-        run: cargo test -p ikigai-runtime-wasmtime --features js-fixtures --test js_handler
+        run: cargo test -p ikigai-runtime-wasmtime --features js-fixtures --test js_handler --test js_bindings
 
   # p3 tripwire (R-D17): p3 is built on nightly in a labeled, NON-BLOCKING job until Rust 1.100.0
   # ships on 2026-11-12, after which p3 moves to the blocking stable jobs. The component tier

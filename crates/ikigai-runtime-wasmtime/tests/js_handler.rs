@@ -26,6 +26,9 @@ use ikigai_runtime_wasmtime::WasmtimeCoreEngine;
 
 const JAIL_GUEST: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/jail_guest.wasm"));
 
+/// The ABI vectors (ikigai-module 0.6.0's `tests/vectors/module-abi.txt`, vendored).
+const VECTORS: &str = include_str!("../../../fixtures/js-plugin/vectors/module-abi.txt");
+
 const READ_NAME: &str = "urn:cap:host:read:name";
 const WRITE_LOG: &str = "urn:cap:host:write:log";
 const READ_SECRET: &str = "urn:cap:host:read:secret";
@@ -47,6 +50,8 @@ impl HostResolver for Kernel {
                 (Verb::Source, "urn:host:name") => READ_NAME,
                 (Verb::Sink, "urn:host:log") => WRITE_LOG,
                 (Verb::Source, "urn:host:secret") => READ_SECRET,
+                (Verb::Source, "urn:host:vectors") => READ_NAME,
+                (_, "urn:host:echo") => READ_NAME,
                 _ => return Err(Error::NotFound(target)),
             };
             let allowed = capability.allows(scope);
@@ -57,7 +62,24 @@ impl HostResolver for Kernel {
             if !allowed {
                 return Err(Error::Denied(target));
             }
+            if target == "urn:host:echo" {
+                // The verb and each named argument, as the kernel received them.
+                let mut echo = format!("{:?}", request.verb);
+                for (name, arg) in request.args.iter() {
+                    let value = match arg {
+                        ArgRef::Inline(b) => format!("inline {}", String::from_utf8_lossy(b)),
+                        ArgRef::Reference(iri) => format!("reference {}", iri.as_str()),
+                        ArgRef::Content(id) => format!("content {id}"),
+                    };
+                    echo.push_str(&format!(" {name}={value}"));
+                }
+                return Ok(Representation::new(
+                    ReprType::new("text/plain"),
+                    echo.into_bytes(),
+                ));
+            }
             let text: &[u8] = match target.as_str() {
+                "urn:host:vectors" => VECTORS.as_bytes(),
                 "urn:host:name" => b"camel",
                 "urn:host:secret" => b"hunter2",
                 _ => {
@@ -110,6 +132,7 @@ fn plugin_digest() -> blake3::Hash {
     for file in [
         "fixtures/js-plugin/Cargo.toml",
         "fixtures/js-plugin/src/lib.rs",
+        "fixtures/js-plugin/src/ikigai.js",
         "crates/ikigai-runtime-guest/src/core_module.rs",
         "crates/ikigai-runtime-guest/Cargo.toml",
     ] {
@@ -235,6 +258,58 @@ fn text(reply: ModuleReply) -> String {
         ModuleReply::Resolved(r) => String::from_utf8(r.bytes).unwrap(),
         other => panic!("expected a representation, got {other:?}"),
     }
+}
+
+#[tokio::test]
+async fn the_generated_surface_speaks_all_five_verbs_with_named_arguments() {
+    let engine = engine();
+    let compiled = engine
+        .compile(handler_module())
+        .expect("the module compiles");
+    let kernel = Arc::new(Kernel::default());
+    let reply = call(
+        &engine,
+        &compiled,
+        "urn:js:verbs",
+        grant(&[READ_NAME]),
+        Arc::clone(&kernel),
+    )
+    .await;
+    assert_eq!(
+        text(reply),
+        "Source a=inline 1|Sink body=inline hi|Exists r=reference urn:host:name\
+         |Delete c=content b3:0000000000000000000000000000000000000000000000000000000000000000|Meta"
+    );
+    let seen: Vec<Verb> = kernel.seen.lock().unwrap().iter().map(|s| s.0).collect();
+    assert_eq!(
+        seen,
+        [
+            Verb::Source,
+            Verb::Sink,
+            Verb::Exists,
+            Verb::Delete,
+            Verb::Meta
+        ]
+    );
+}
+
+#[tokio::test]
+async fn the_generated_codec_matches_every_abi_vector_in_quickjs() {
+    let engine = engine();
+    let compiled = engine
+        .compile(handler_module())
+        .expect("the module compiles");
+    let kernel = Arc::new(Kernel::default());
+    let reply = call(
+        &engine,
+        &compiled,
+        "urn:js:vectors",
+        grant(&[READ_NAME]),
+        kernel,
+    )
+    .await;
+    // One per variant of ModuleCall (6) and ModuleReply (8), each re-encoded byte for byte.
+    assert_eq!(text(reply), "14 vectors");
 }
 
 #[tokio::test]

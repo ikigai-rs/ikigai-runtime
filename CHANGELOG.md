@@ -2,6 +2,16 @@
 
 ## Unreleased
 
+- **Generated JavaScript guest bindings for the J2 session** (ledger #2414, stage 1), behind the
+  test-only `js-fixtures` feature; no public API changes. `tests/js_bindings.rs` states
+  ikigai-module-abi 0.1.0's wire types as data and generates from them
+  `fixtures/js-plugin/src/ikigai.js`: a postcard codec for every type and the `ikigai` surface,
+  one function per verb (`source`, `sink`, `exists`, `delete`, `meta`), each taking a target and
+  named arguments and returning the representation. The `js-plugin` fixture no longer
+  hand-writes the verbs; it gives the script the raw `host_call` and evaluates it at
+  pre-initialization. The checked-in file must equal the generator's output, the vendored ABI
+  vectors must equal what the linked Rust crate encodes, and the generated codec must
+  re-encode every vector byte for byte inside QuickJS.
 - **Spike: a TypeScript handler as a JavaScript engine module** (ledger #3628), behind the
   test-only `js-fixtures` feature; no public API changes. `fixtures/js-plugin` is a Javy plugin
   (javy-plugin-api 7.1.0, QuickJS, wasm32-wasip1) that exports the J2 allocator and
