@@ -47,7 +47,7 @@ function verbs(): string {
     ikigai.source("urn:host:echo", { a: "1" }).text,
     ikigai.sink("urn:host:echo", { body: new Uint8Array([104, 105]) }).text,
     ikigai.exists("urn:host:echo", { r: { reference: "urn:host:name" } }).text,
-    ikigai.delete("urn:host:echo", { c: { content: "b3:00" } }).text,
+    ikigai.delete("urn:host:echo", { c: { content: "b3:0000000000000000000000000000000000000000000000000000000000000000" } }).text,
     ikigai.meta("urn:host:echo").text,
   ].join("|");
 }

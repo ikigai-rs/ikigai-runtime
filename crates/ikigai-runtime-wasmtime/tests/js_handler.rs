@@ -278,7 +278,7 @@ async fn the_generated_surface_speaks_all_five_verbs_with_named_arguments() {
     assert_eq!(
         text(reply),
         "Source a=inline 1|Sink body=inline hi|Exists r=reference urn:host:name\
-         |Delete c=content b3:00|Meta"
+         |Delete c=content b3:0000000000000000000000000000000000000000000000000000000000000000|Meta"
     );
     let seen: Vec<Verb> = kernel.seen.lock().unwrap().iter().map(|s| s.0).collect();
     assert_eq!(
