@@ -489,3 +489,115 @@ mod tests {
         ));
     }
 }
+
+/// The bound on a J2 session's captured stdout and stderr, each (R-D6 point 2, amended
+/// 2026-11-12). Past it a write is DROPPED and counted, never refused: a session's answer is its
+/// reply, so a chatty guest loses its log, not its call.
+pub const SESSION_STDIO_CAPACITY: usize = 64 * 1024;
+
+/// What a J2 session's guest wrote to stdout and stderr, for a host to log or discard. Never the
+/// host's own stdio and never the representation.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct SessionStdio {
+    /// The first [`SESSION_STDIO_CAPACITY`] bytes written to stdout.
+    pub stdout: Vec<u8>,
+    /// The first [`SESSION_STDIO_CAPACITY`] bytes written to stderr.
+    pub stderr: Vec<u8>,
+    /// Bytes written to stdout past the bound, dropped.
+    pub stdout_dropped: u64,
+    /// Bytes written to stderr past the bound, dropped.
+    pub stderr_dropped: u64,
+}
+
+/// A bounded output capture that keeps the first `capacity` bytes and counts the rest. Every
+/// write succeeds, so the guest never sees the bound.
+#[derive(Clone, Debug)]
+pub(crate) struct BoundedCapture {
+    state: Arc<std::sync::Mutex<(Vec<u8>, u64)>>,
+    capacity: usize,
+}
+
+impl BoundedCapture {
+    pub(crate) fn new(capacity: usize) -> Self {
+        BoundedCapture {
+            state: Arc::default(),
+            capacity,
+        }
+    }
+
+    fn take(&self, bytes: &[u8]) {
+        let mut state = self.state.lock().unwrap_or_else(|p| p.into_inner());
+        let room = self.capacity.saturating_sub(state.0.len());
+        let kept = room.min(bytes.len());
+        state.0.extend_from_slice(&bytes[..kept]);
+        state.1 += (bytes.len() - kept) as u64;
+    }
+
+    /// The bytes kept and the count dropped.
+    pub(crate) fn contents(&self) -> (Vec<u8>, u64) {
+        let state = self.state.lock().unwrap_or_else(|p| p.into_inner());
+        (state.0.clone(), state.1)
+    }
+}
+
+impl wasmtime_wasi::cli::IsTerminal for BoundedCapture {
+    fn is_terminal(&self) -> bool {
+        false
+    }
+}
+
+impl wasmtime_wasi::cli::StdoutStream for BoundedCapture {
+    fn p2_stream(&self) -> Box<dyn wasmtime_wasi::p2::OutputStream> {
+        Box::new(self.clone())
+    }
+
+    fn async_stream(&self) -> Box<dyn tokio::io::AsyncWrite + Send + Sync> {
+        Box::new(self.clone())
+    }
+}
+
+impl wasmtime_wasi::p2::OutputStream for BoundedCapture {
+    fn write(&mut self, bytes: bytes::Bytes) -> wasmtime_wasi::p2::StreamResult<()> {
+        self.take(&bytes);
+        Ok(())
+    }
+
+    fn flush(&mut self) -> wasmtime_wasi::p2::StreamResult<()> {
+        Ok(())
+    }
+
+    fn check_write(&mut self) -> wasmtime_wasi::p2::StreamResult<usize> {
+        // Always ready: past the bound the bytes are dropped, so there is no backpressure.
+        Ok(SESSION_STDIO_CAPACITY)
+    }
+}
+
+#[async_trait::async_trait]
+impl wasmtime_wasi::p2::Pollable for BoundedCapture {
+    async fn ready(&mut self) {}
+}
+
+impl tokio::io::AsyncWrite for BoundedCapture {
+    fn poll_write(
+        self: std::pin::Pin<&mut Self>,
+        _cx: &mut std::task::Context<'_>,
+        buf: &[u8],
+    ) -> std::task::Poll<std::io::Result<usize>> {
+        self.take(buf);
+        std::task::Poll::Ready(Ok(buf.len()))
+    }
+
+    fn poll_flush(
+        self: std::pin::Pin<&mut Self>,
+        _cx: &mut std::task::Context<'_>,
+    ) -> std::task::Poll<std::io::Result<()>> {
+        std::task::Poll::Ready(Ok(()))
+    }
+
+    fn poll_shutdown(
+        self: std::pin::Pin<&mut Self>,
+        _cx: &mut std::task::Context<'_>,
+    ) -> std::task::Poll<std::io::Result<()>> {
+        std::task::Poll::Ready(Ok(()))
+    }
+}

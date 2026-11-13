@@ -35,9 +35,10 @@ pub mod wasi;
 
 pub use budget::Metering;
 pub use compiled_cache::{CacheOutcome, CompiledCache, Origin};
-pub use core_tier::{detect_convention, Compiled, WasmtimeCoreEngine};
+pub use core_tier::{detect_convention, Compiled, SessionStdioSink, WasmtimeCoreEngine};
 pub use ikigai_runtime::engine::Invoked;
 pub use transport::JailTransport;
+pub use wasi::{SessionStdio, SESSION_STDIO_CAPACITY};
 
 use ikigai_runtime::loader::EngineCompatHash;
 
