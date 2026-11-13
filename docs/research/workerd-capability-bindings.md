@@ -142,8 +142,8 @@ Notes on what each number is:
   would add a round trip of that kind to every kernel call.
 - **Cold start** is the whole process: spawn, config, isolate, compile both small Workers, and
   the first reply. It is low because V8 starts from a snapshot and the handler is a few hundred
-  bytes of JavaScript; #3628's cold cost is compiling the 909 KB QuickJS module, which #3628's
-  compiled-form cache (R-D7) removes after the first run.
+  bytes of JavaScript; #3628's cold cost is compiling the 909 KB QuickJS module, which the on-disk
+  compiled-form cache (R-D7, commit 13d0ef8) removes after the first run.
 - **Memory**: #3628 recorded no memory figure, so there is nothing to compare against. After
   the full measurement run (about 6,000 HTTP calls and 40,000 in-isolate kernel calls) workerd's
   RSS had grown to 331 MB (JIT) and 322 MB (jitless). We set no heap limit and did not look into
@@ -156,7 +156,8 @@ Notes on what each number is:
 ## 4. What we would take on
 
 - **License:** Apache-2.0, checked in the tag's `LICENSE` and in the npm package metadata. V8 is
-  under its own BSD-style license (not checked in this spike). Apache-2.0 is compatible with this repository's MIT or Apache-2.0.
+  under its own BSD-style license (not checked in this spike).
+  Apache-2.0 is compatible with this repository's MIT or Apache-2.0.
 - **Size:** a 150 MB binary for macOS arm64 (41 MB compressed on npm). It replaces nothing in
   ikigai-runtime; it is in addition to wasmtime.
 - **Toolchain:** Bazel 9.3.1 (`.bazelversion`), C++ with Cap'n Proto and KJ, Rust (the entry
