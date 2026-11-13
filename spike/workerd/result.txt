@@ -1,0 +1,19 @@
+# workerd 2026-11-13  Darwin arm64
+jit      cold(spawn->first hello) median   11.19ms  min   10.84ms
+jit      warm HTTP median urn:js:noop          73.3us
+jit      warm HTTP median urn:js:hello         90.4us
+jit      warm HTTP median urn:js:greet        106.5us
+jit      warm HTTP median urn:js:loop        4677.3us
+jit      loop minus noop     4.60ms
+jit      in-isolate per hello     15.85us (20000 calls, Date.now)
+jit      in-isolate per greet     34.25us (20000 calls, Date.now)
+jit      RSS after warm runs   331.1 MB
+jitless  cold(spawn->first hello) median   13.69ms  min   13.16ms
+jitless  warm HTTP median urn:js:noop          73.4us
+jitless  warm HTTP median urn:js:hello         91.2us
+jitless  warm HTTP median urn:js:greet        107.3us
+jitless  warm HTTP median urn:js:loop        9757.1us
+jitless  loop minus noop     9.68ms
+jitless  in-isolate per hello     15.95us (20000 calls, Date.now)
+jitless  in-isolate per greet     34.30us (20000 calls, Date.now)
+jitless  RSS after warm runs   321.7 MB
