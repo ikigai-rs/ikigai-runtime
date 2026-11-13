@@ -1,0 +1,27 @@
+# js_handler measure with tsrs (#3659): Linux x86_64 (11th Gen Intel Core i7-11800H, 16 threads),
+# release, wasmtime 50, javy 9.1.0, esbuild 0.28.2, tsrs 7.1.0-beta.tsrs1, rustc 1.99.0.
+# The machine was shared with other builds: 1-minute load 8.3-8.9 during this run (up to 38
+# during earlier ones, where the js rows were within 10% of these). Compare rows within this
+# file, not with the macOS file.
+# cargo test --release -p ikigai-runtime-wasmtime --features js-fixtures --test js_handler -- --ignored --nocapture measure
+# cold = engine + compile (no compiled cache) + first call; warm = median of fresh-instance calls (200; loop: 5)
+rust  urn:jail:hello (1 Source)    size     60714 B  compile   21.53ms  cold   21.84ms  warm median   44.48µs
+js    urn:js:hello   (1 Source)    size   1069841 B  compile  166.55ms  cold  167.26ms  warm median  361.58µs
+js    urn:js:greet   (Source+Sink) size   1069841 B  compile  182.39ms  cold  183.20ms  warm median  487.34µs
+js    urn:js:loop    (1e6 iters)   size   1069841 B  compile  183.96ms  cold  323.64ms  warm median  138.85ms
+js    urn:js:greet   (tsrs emit)   size   1068183 B  compile  179.30ms  cold  180.15ms  warm median  489.17µs
+# TypeScript -> JavaScript. esbuild: a process per compile, wall time. tsrs in process: around
+# ts_tsrs::compile alone inside the driver, cold = first compile in the process, warm = median of 20.
+esbuild emit (a process each)       first    4.26ms  median of 20 more    8.16ms  output 1712 B
+tsrs in process     emit cold 3.310363ms warm 2.208208ms
+tsrs in process     check cold 8.597675ms warm 9.832831ms
+tsrs emit output 2346 B; driver binary 16510952 B
+# The whole ts-tsrs process, wall time, first and median of 20 more (python subprocess timing):
+# tsrs emit 5.14 ms / 8.32 ms; esbuild 4.27 ms / 8.76 ms; tsrs check 22.83 ms / 9.39 ms.
+# tsrs as a J2 session module (wasm32-wasip1, no wasm-opt): compile = Cranelift, no compiled
+# cache; per call = a fresh instance, the sources handed in as named arguments.
+tsrs in the sandbox emit  size  15182929 B  compile     1.32s  cold     1.32s  per call median    5.26ms  fuel 29014932
+tsrs in the sandbox check size  15182929 B  compile     1.32s  cold     1.32s  per call median   33.33ms  fuel 178810777
+tsrs in the sandbox check fits a memory budget of 112 MiB, not 96 MiB
+# Build cost of fixtures/ts-tsrs from nothing (load 20-38): native driver 2m03s, wasm32-wasip1
+# module 2m25s; 135 packages in its lock, 24 of them tsrs crates. Module gzip -9: 3,547,563 B.
