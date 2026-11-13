@@ -37,6 +37,43 @@ jobs:
       - name: test (jail-fixtures)
         run: cargo test -p ikigai-runtime-wasmtime --features jail-fixtures
 
+  # The JavaScript spike (ledger #3628, `tests/js_handler.rs`), behind the `js-fixtures` feature:
+  # a TypeScript handler compiled by esbuild and run by a custom Javy plugin as a J2 session
+  # module. Both tools are pinned and checked against their published digests before use: javy
+  # against the release's `.sha256`, esbuild against the npm registry's `integrity`. A missing
+  # tool fails the tests (they panic), so this job cannot pass by skipping them.
+  js-fixtures:
+    name: js-fixtures (javy)
+    runs-on: ubuntu-latest
+    env:
+      JAVY_VERSION: v9.1.0
+      JAVY_SHA256: a68b122d48eb3dfc1b801d4e14c39271fde3638243d3272d206e376ac9189e39
+      ESBUILD_VERSION: 0.28.2
+      ESBUILD_INTEGRITY: sha512-4xTZr1FUmSoQW4XIWmit3tzQrUTZM+N3P0XV8xROKYF50XfI7xeO90+1bZvNwxIufQ9hDQVRJH5YhgPVF8A/HQ==
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown, wasm32-wasip1, wasm32-wasip2
+          components: clippy
+      - uses: Swatinem/rust-cache@v2
+      - name: install javy and esbuild (checksums checked)
+        run: |
+          mkdir -p "$RUNNER_TEMP/tools" && cd "$RUNNER_TEMP/tools"
+          curl -sSfLO "https://github.com/bytecodealliance/javy/releases/download/$JAVY_VERSION/javy-x86_64-linux-$JAVY_VERSION.gz"
+          echo "$JAVY_SHA256  javy-x86_64-linux-$JAVY_VERSION.gz" | sha256sum -c -
+          gunzip "javy-x86_64-linux-$JAVY_VERSION.gz" && mv "javy-x86_64-linux-$JAVY_VERSION" javy && chmod +x javy
+          curl -sSfLO "https://registry.npmjs.org/@esbuild/linux-x64/-/linux-x64-$ESBUILD_VERSION.tgz"
+          test "sha512-$(openssl dgst -sha512 -binary "linux-x64-$ESBUILD_VERSION.tgz" | base64 -w0)" = "$ESBUILD_INTEGRITY"
+          tar xzf "linux-x64-$ESBUILD_VERSION.tgz"
+          ./javy --version && ./package/bin/esbuild --version
+          echo "IKIGAI_JAVY=$PWD/javy" >> "$GITHUB_ENV"
+          echo "IKIGAI_ESBUILD=$PWD/package/bin/esbuild" >> "$GITHUB_ENV"
+      - name: clippy (js-fixtures)
+        run: cargo clippy -p ikigai-runtime-wasmtime --all-targets --features js-fixtures -- -D warnings
+      - name: test (js-fixtures)
+        run: cargo test -p ikigai-runtime-wasmtime --features js-fixtures --test js_handler
+
   # p3 tripwire (R-D17): p3 is built on nightly in a labeled, NON-BLOCKING job until Rust 1.100.0
   # ships on 2026-11-12, after which p3 moves to the blocking stable jobs. The component tier
   # carries no p3 code path yet (its async exports are skipped and reported), so this builds the
