@@ -1,0 +1,34 @@
+# tsrs (oxc-project/tsrs, a Rust port of the TypeScript 7.1 beta compiler) as the TypeScript step
+# of the JavaScript spike: a research fixture for ledger #3659, not a public API. One function
+# (`compile`, src/lib.rs) over an in-memory file system, driven two ways:
+# - natively by the `ts-tsrs` binary, which `tests/js_handler.rs` (feature `js-fixtures`) runs
+#   to emit JavaScript, type-check a handler and time both, in process;
+# - inside ikigai-runtime as a J2 session module (wasm32-wasip1 cdylib), whose sources are the
+#   named arguments the host hands it.
+# Its OWN workspace so the native workspace never builds it. tsrs tracks a TypeScript beta, so
+# every crate is pinned exactly.
+[package]
+name = "ts-tsrs"
+version = "0.0.0"
+edition = "2024"
+publish = false
+
+[workspace]
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+tsrs_ast = "=7.1.0-beta.tsrs1"
+tsrs_compiler = "=7.1.0-beta.tsrs1"
+tsrs_core = "=7.1.0-beta.tsrs1"
+tsrs_execute = "=7.1.0-beta.tsrs1"
+tsrs_vfs = "=7.1.0-beta.tsrs1"
+
+[target.'cfg(target_family = "wasm")'.dependencies]
+ikigai-runtime-guest = { path = "../../crates/ikigai-runtime-guest" }
+
+[profile.release]
+opt-level = "s"
+lto = true
+codegen-units = 1

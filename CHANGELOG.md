@@ -2,6 +2,16 @@
 
 ## Unreleased
 
+- **Research: tsrs as the TypeScript step** (ledger #3659), behind the test-only `js-fixtures`
+  feature; no public API changes. `fixtures/ts-tsrs` compiles TypeScript with tsrs
+  7.1.0-beta.tsrs1 (pinned exactly) over an in-memory file system, natively and as a J2
+  session module. `tests/js_bindings.rs` also generates `fixtures/js-plugin/src/ikigai.d.ts`
+  from the ABI. `tests/js_handler.rs` runs tsrs's JavaScript in the plugin, type-checks the
+  handler against the generated declarations (a wrong call is a typed `InvalidArgument` with
+  its file, line and message), and compiles TypeScript inside the sandbox. The handler now
+  checks clean: it named an undeclared `KernelError` and called a union of codecs. esbuild
+  stays. Report: `docs/research/tsrs-typescript.md`; numbers:
+  `measurements/js-handler-tsrs-linux.txt`.
 - **Generated JavaScript guest bindings for the J2 session** (ledger #2414, stage 1), behind the
   test-only `js-fixtures` feature; no public API changes. `tests/js_bindings.rs` states
   ikigai-module-abi 0.1.0's wire types as data and generates from them

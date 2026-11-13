@@ -1,37 +1,10 @@
-// The spike's TypeScript handler (#3628). Compiled to JavaScript by esbuild and run by the
-// `js-plugin` fixture (QuickJS under Javy) as a J2 session module. It has no authority of its
-// own: `ikigai` is the only way out, and every call it makes is held to the session's grant.
+// The spike's TypeScript handler (#3628). Compiled to JavaScript by esbuild (or by tsrs, #3659)
+// and run by the `js-plugin` fixture (QuickJS under Javy) as a J2 session module. It has no
+// authority of its own: `ikigai` is the only way out, and every call it makes is held to the
+// session's grant.
 
-/** Named arguments: a string or bytes go inline; the others name a resource or a stored value. */
-type Arg = string | Uint8Array | { reference: string } | { content: string };
-
-/** A representation, as the generated surface lifts it. */
-interface Representation {
-  mediaType: string;
-  bytes: Uint8Array;
-  readonly text: string;
-}
-
-/** A codec for one ABI type, generated with the surface. */
-interface Codec {
-  encode(value: unknown): Uint8Array;
-  decode(bytes: Uint8Array): unknown;
-}
-
-/**
- * The kernel verbs, GENERATED from the ABI (`fixtures/js-plugin/src/ikigai.js`): one per verb,
- * each taking a target and named arguments.
- */
-interface Kernel {
-  source(iri: string, args?: Record<string, Arg>): Representation;
-  sink(iri: string, args?: Record<string, Arg>): Representation;
-  exists(iri: string, args?: Record<string, Arg>): Representation;
-  delete(iri: string, args?: Record<string, Arg>): Representation;
-  meta(iri: string, args?: Record<string, Arg>): Representation;
-  codec: { AbiModuleCall: Codec; AbiModuleReply: Codec };
-}
-
-declare const ikigai: Kernel;
+// `ikigai` is declared by fixtures/js-plugin/src/ikigai.d.ts, generated from the ABI with the
+// surface itself; the publish step type-checks this file against it (ledger #3659).
 
 function greet(): string {
   const name = ikigai.source("urn:host:name").text;
@@ -61,7 +34,7 @@ function vectors(): string {
   for (const line of ikigai.source("urn:host:vectors").text.split("\n")) {
     if (!line || line.startsWith("#")) continue;
     const [name, encoded] = line.split(" ");
-    const codec = name.startsWith("ModuleCall.") ? ikigai.codec.AbiModuleCall : ikigai.codec.AbiModuleReply;
+    const codec: ikigai.Codec<unknown> = name.startsWith("ModuleCall.") ? ikigai.codec.AbiModuleCall : ikigai.codec.AbiModuleReply;
     if (hex(codec.encode(codec.decode(unhex(encoded)))) !== encoded) drift.push(name);
     n++;
   }
@@ -91,7 +64,7 @@ export function handle(target: string): string {
         ikigai.source("urn:host:secret");
         return "read";
       } catch (e) {
-        const refusal = e as KernelError;
+        const refusal = e as ikigai.KernelError;
         return `${refusal.name}: ${refusal.message}`;
       }
     case "urn:js:verbs":
