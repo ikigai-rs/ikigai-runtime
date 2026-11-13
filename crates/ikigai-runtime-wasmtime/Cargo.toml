@@ -58,6 +58,11 @@ tokio = { workspace = true }
 # the dedicated `jail-fixtures` CI job enables it (9c: a feature-gated target gets a job that
 # enables it). The default build (and the always-on WAT tests) needs no wasm toolchain.
 jail-fixtures = []
+# The JavaScript spike (#3628, `tests/js_handler.rs`): a TypeScript handler run by a custom Javy
+# plugin (`fixtures/js-plugin`) as a J2 session module. A test fixture, not a public API. Needs
+# `IKIGAI_JAVY` and `IKIGAI_ESBUILD` (javy 9.1.0 and esbuild 0.28.2, checksum-verified);
+# implies `jail-fixtures` for the Rust endpoint it is measured against.
+js-fixtures = ["jail-fixtures"]
 # WASI p3 (R-D17): built on nightly in the non-blocking job until Rust 1.100.0 ships on
 # 2026-11-12. Nothing in the tier depends on it yet; the feature keeps the build honest.
 p3 = ["wasmtime-wasi/p3"]

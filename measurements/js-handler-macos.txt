@@ -1,0 +1,7 @@
+# js_handler measure (#3628): macOS arm64, release, wasmtime 50, javy 9.1.0, esbuild 0.28.2
+# cargo test --release -p ikigai-runtime-wasmtime --features js-fixtures --test js_handler -- --ignored --nocapture measure
+# cold = engine + compile (no compiled cache) + first call; warm = median of fresh-instance calls (200; loop: 5)
+rust  urn:jail:hello (1 Source)    size     63360 B  compile   11.76ms  cold   12.23ms  warm median   25.08µs
+js    urn:js:hello   (1 Source)    size    909165 B  compile   65.69ms  cold   66.08ms  warm median   70.79µs
+js    urn:js:greet   (Source+Sink) size    909165 B  compile   57.03ms  cold   57.32ms  warm median   77.58µs
+js    urn:js:loop    (1e6 iters)   size    909165 B  compile   54.03ms  cold  125.75ms  warm median   68.19ms
