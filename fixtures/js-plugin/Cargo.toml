@@ -1,0 +1,23 @@
+# A Javy plugin (javy-plugin-api, QuickJS) that speaks the J2 session: it exports the
+# ikigai-module ABI v1 (`ikigai_alloc`/`ikigai_free`/`ikigai_invoke`) and gives JavaScript the
+# kernel verbs over `ikigai.host_call`. A spike fixture (#3628), not a public API: built for
+# wasm32-wasip1 by `ikigai-runtime-wasmtime`'s build.rs under the `js-fixtures` feature, then
+# pre-initialized by `javy init-plugin`. Its OWN workspace so the native workspace never builds it.
+[package]
+name = "js-plugin"
+version = "0.0.0"
+edition = "2021"
+publish = false
+
+[workspace]
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+javy-plugin-api = "7.1.0"
+ikigai-runtime-guest = { path = "../../crates/ikigai-runtime-guest" }
+
+[profile.release]
+opt-level = "s"
+lto = true

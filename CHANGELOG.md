@@ -2,6 +2,18 @@
 
 ## Unreleased
 
+- **Spike: a TypeScript handler as a JavaScript engine module** (ledger #3628), behind the
+  test-only `js-fixtures` feature; no public API changes. `fixtures/js-plugin` is a Javy plugin
+  (javy-plugin-api 7.1.0, QuickJS, wasm32-wasip1) that exports the J2 allocator and
+  `ikigai_invoke` and gives JavaScript `ikigai.source` and `ikigai.sink` over `ikigai.host_call`;
+  a typed refusal is a JavaScript exception named for its class, and keeps its type if it
+  escapes. `tests/js_handler.rs` compiles `fixtures/js-handler/handler.ts` with esbuild 0.28.2,
+  pre-initializes the module with javy 9.1.0 (`init-plugin --deterministic`), caches each
+  derived form under the digest of its input, and checks that the handler reads and writes what
+  its grant allows and is refused, typed, by the grant for what it does not. Measurements are in
+  `measurements/js-handler-macos.txt`.
+  CI does not run it yet: the job that installs both tools with their digests checked is
+  proposed in the pull request, since adding a workflow needs a maintainer.
 - **A J2 session module may also import WASI p1** (R-D6 point 2, amended 2026-11-12, ledger
   #3628). A module exporting `ikigai_alloc`/`ikigai_free`/`ikigai_invoke` and importing
   `ikigai.host_call` may import `wasi_snapshot_preview1` too, as a JavaScript engine compiled to
