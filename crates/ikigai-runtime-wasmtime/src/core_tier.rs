@@ -1,5 +1,7 @@
 //! The **core-module tier** on wasmtime (R-D1, R-D6): three calling conventions, a fresh `Store`
 //! per session, budgets from [`Limits`], and every `host_call` held to the session's capability.
+//! A session module may also import WASI p1, linked against the empty context (R-D6 point 2,
+//! amended 2026-11-12).
 
 use std::sync::Arc;
 use std::time::Instant;
@@ -22,6 +24,7 @@ use crate::budget::{
     MemLimiter, Metering,
 };
 use crate::compiled_cache::{CacheOutcome, CompiledCache, Origin};
+use crate::wasi::{BoundedCapture, SessionStdio, SESSION_STDIO_CAPACITY};
 
 /// A compiled core module, cacheable by digest and engine-compatibility hash (R-D7).
 pub struct Compiled {
@@ -56,6 +59,12 @@ pub fn detect_convention(compiled: &Compiled) -> Convention {
     }
 }
 
+/// Where a J2 session's captured stdout and stderr go when the call ends (R-D6 point 2).
+pub type SessionStdioSink = Arc<dyn Fn(&SessionStdio) + Send + Sync>;
+
+/// The WASI p1 import module a J2 session may also import (R-D6 point 2, amended 2026-11-12).
+const WASI_P1: &str = "wasi_snapshot_preview1";
+
 /// The wasmtime core-module engine (R-D1).
 pub struct WasmtimeCoreEngine {
     engine: Engine,
@@ -63,6 +72,7 @@ pub struct WasmtimeCoreEngine {
     metering: Metering,
     _ticker: EpochTicker,
     disk: Option<CompiledCache>,
+    session_stdio: Option<SessionStdioSink>,
 }
 
 impl WasmtimeCoreEngine {
@@ -85,6 +95,7 @@ impl WasmtimeCoreEngine {
             metering,
             _ticker: ticker,
             disk: None,
+            session_stdio: None,
         })
     }
 
@@ -92,6 +103,14 @@ impl WasmtimeCoreEngine {
     /// instead of compiling (R-D7).
     pub fn with_compiled_cache(mut self, cache: CompiledCache) -> Self {
         self.disk = Some(cache);
+        self
+    }
+
+    /// Hand what a J2 session's guest wrote to stdout and stderr to `sink` when each call ends,
+    /// to log or discard (R-D6 point 2). Without one it is discarded. It never reaches the host
+    /// process's own stdio, and never the reply.
+    pub fn with_session_stdio(mut self, sink: SessionStdioSink) -> Self {
+        self.session_stdio = Some(sink);
         self
     }
 
@@ -167,6 +186,12 @@ impl WasmtimeCoreEngine {
         })
     }
 
+    /// The session convention. A module that also imports `wasi_snapshot_preview1` gets the
+    /// empty, deterministic context the command convention builds (R-D6 point 2, amended
+    /// 2026-11-12): no preopens, env, args or sockets, a fixed clock, an RNG seeded from the
+    /// artifact and the call (not a source of secrets), stdin at EOF, and stdout and stderr in
+    /// a bounded capture handed to [`with_session_stdio`](Self::with_session_stdio)'s sink.
+    /// `host_call` stays the only route out.
     async fn invoke_session(
         &self,
         compiled: &Compiled,
@@ -174,17 +199,82 @@ impl WasmtimeCoreEngine {
         limits: &Limits,
         host: Arc<dyn HostResolver>,
     ) -> Result<Invoked, Error> {
+        let wants_wasi = compiled
+            .module
+            .imports()
+            .any(|import| import.module() == WASI_P1);
+        if !wants_wasi {
+            return self
+                .run_session(compiled, encoded_call, limits, host, None)
+                .await;
+        }
+        let stdout = BoundedCapture::new(SESSION_STDIO_CAPACITY);
+        let stderr = BoundedCapture::new(SESSION_STDIO_CAPACITY);
+        let mut builder = crate::wasi::deterministic_builder(&crate::wasi::seed_of(
+            compiled.digest.as_str().as_bytes(),
+            encoded_call,
+        ));
+        // stdin is left as the builder's empty stream: every read is EOF.
+        builder.stdout(stdout.clone()).stderr(stderr.clone());
+        let ran = self
+            .run_session(
+                compiled,
+                encoded_call,
+                limits,
+                host,
+                Some(builder.build_p1()),
+            )
+            .await;
+        if let Some(sink) = &self.session_stdio {
+            let (stdout, stdout_dropped) = stdout.contents();
+            let (stderr, stderr_dropped) = stderr.contents();
+            sink(&SessionStdio {
+                stdout,
+                stderr,
+                stdout_dropped,
+                stderr_dropped,
+            });
+        }
+        ran
+    }
+
+    async fn run_session(
+        &self,
+        compiled: &Compiled,
+        encoded_call: &[u8],
+        limits: &Limits,
+        host: Arc<dyn HostResolver>,
+        wasi: Option<wasmtime_wasi::p1::WasiP1Ctx>,
+    ) -> Result<Invoked, Error> {
         let session_cap = session_cap_of(encoded_call);
+        let linked_wasi = wasi.is_some();
         let data = SessionData {
             limiter: MemLimiter::new(limits.memory_bytes),
             host,
             session_cap,
+            wasi,
         };
         let mut store = Store::new(&self.engine, data);
         store.limiter(|d| &mut d.limiter as &mut dyn ResourceLimiter);
         apply_budget(&mut store, limits, self.metering);
+        // A `proc_exit` anywhere in the call ends the call, never the host; the store, and the
+        // instance with it, is dropped on return.
+        let fail = |e: wasmtime::Error, denied: bool| match exit_code(&e) {
+            Some(code) => Error::Endpoint(format!(
+                "the module called proc_exit with code {code}, which ends the call without a reply"
+            )),
+            None => trap_to_error(e, limits, denied),
+        };
 
         let mut linker: Linker<SessionData> = Linker::new(&self.engine);
+        if linked_wasi {
+            wasmtime_wasi::p1::add_to_linker_async(&mut linker, |d: &mut SessionData| {
+                d.wasi
+                    .as_mut()
+                    .expect("WASI p1 is linked only into a store that carries its context")
+            })
+            .map_err(|e| Error::Endpoint(format!("linking WASI p1: {e:#}")))?;
+        }
         linker
             .func_wrap_async(
                 IMPORT_MODULE,
@@ -197,7 +287,7 @@ impl WasmtimeCoreEngine {
         let instance = linker
             .instantiate_async(&mut store, &compiled.module)
             .await
-            .map_err(|e| trap_to_error(e, limits, store.data().limiter.denied))?;
+            .map_err(|e| fail(e, store.data().limiter.denied))?;
 
         let alloc = instance
             .get_func(&mut store, EXPORT_ALLOC)
@@ -214,7 +304,7 @@ impl WasmtimeCoreEngine {
         alloc
             .call_async(&mut store, &[Val::I32(encoded_call.len() as i32)], &mut out)
             .await
-            .map_err(|e| trap_to_error(e, limits, store.data().limiter.denied))?;
+            .map_err(|e| fail(e, store.data().limiter.denied))?;
         let ptr = as_u32(&out[0])?;
         memory
             .write(&mut store, ptr as usize, encoded_call)
@@ -230,7 +320,7 @@ impl WasmtimeCoreEngine {
                 &mut ret,
             )
             .await
-            .map_err(|e| trap_to_error(e, limits, store.data().limiter.denied))?;
+            .map_err(|e| fail(e, store.data().limiter.denied))?;
         let mut consumed = consumed_of(&store, before);
         consumed.wall = Some(started.elapsed());
 
@@ -357,6 +447,8 @@ struct SessionData {
     limiter: MemLimiter,
     host: Arc<dyn HostResolver>,
     session_cap: Capability,
+    /// The empty WASI p1 context, when the module imports `wasi_snapshot_preview1`.
+    wasi: Option<wasmtime_wasi::p1::WasiP1Ctx>,
 }
 
 /// The store data for a WASI p1 command.

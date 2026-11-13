@@ -2,6 +2,17 @@
 
 ## Unreleased
 
+- **A J2 session module may also import WASI p1** (R-D6 point 2, amended 2026-11-12, ledger
+  #3628). A module exporting `ikigai_alloc`/`ikigai_free`/`ikigai_invoke` and importing
+  `ikigai.host_call` may import `wasi_snapshot_preview1` too, as a JavaScript engine compiled to
+  wasm does. Those imports are linked against the command convention's empty, deterministic
+  context: no preopens, env, args or sockets, a fixed clock, and a seeded RNG that is not a source
+  of secrets. stdin reads EOF. stdout and stderr go to a capture bounded at
+  `SESSION_STDIO_CAPACITY` (64 KiB each); past it writes are dropped and counted. A host reads
+  the capture through `WasmtimeCoreEngine::with_session_stdio`; otherwise it is discarded. It
+  never reaches the host's stdio or the reply. `proc_exit`, with any code, ends the call with an
+  endpoint error naming the code. `host_call` stays the only route out. A module without p1
+  imports runs exactly as before. Tested by `tests/session_wasi.rs` (WAT, always on).
 - **Compiled forms on disk** (R-D7, ledger #3339): `WasmtimeCoreEngine::with_compiled_cache` and
   `ComponentEngine::with_compiled_cache` take a `CompiledCache`, the host's own directory. After
   compiling, the engine writes the `.cwasm` to `{dir}/{engine}/{digest}.cwasm`; a restarted host

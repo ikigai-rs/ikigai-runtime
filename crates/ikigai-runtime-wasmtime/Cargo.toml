@@ -48,6 +48,9 @@ wit-parser = { workspace = true, features = ["decoding"] }
 http = { workspace = true }
 http-body-util = { workspace = true }
 bytes = { workspace = true }
+# Only for `AsyncWrite`, the trait wasmtime-wasi's `StdoutStream` names: the J2 session's
+# bounded stdio capture implements it. No features; already in wasmtime-wasi's graph.
+tokio = { workspace = true }
 
 [features]
 # The guest-fixture end-to-end tests (`tests/jail.rs`, `tests/wasi_p1.rs`, `tests/component*.rs`,

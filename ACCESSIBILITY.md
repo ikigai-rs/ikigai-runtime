@@ -18,6 +18,9 @@ the [ACCESSIBILITY.md template](https://github.com/mgifford/ACCESSIBILITY.md) (M
 - **Run failures** (`crates/ikigai-runtime-wasmtime/src/budget.rs`, `trap_to_error`), as typed
   `ikigai_core::Error`s: a module over its memory, fuel or time budget, past its deadline, trapped,
   or failed; and the refusal of a fuel budget an epoch-only engine cannot enforce.
+- **A session module's `proc_exit`** (`crates/ikigai-runtime-wasmtime/src/core_tier.rs`): an
+  endpoint error naming the exit code, for example `the module called proc_exit with code 7,
+  which ends the call without a reply`.
 - **Mount and grant refusals**: grant plan errors (`PlanError`, `crates/ikigai-runtime/src/grants.rs`:
   the grant's scope and why it is refused, for example a path that climbs out of the jail root);
   an artifact whose bytes do not match its digest (`LoadError`, `crates/ikigai-runtime/src/loader.rs`); a module that
@@ -35,7 +38,8 @@ the [ACCESSIBILITY.md template](https://github.com/mgifford/ACCESSIBILITY.md) (M
   from the component's own WIT, which are the component author's words.
 
 Not this repository's: what a guest module itself writes (a WASI command's stdout or stderr
-becomes its answer as written), and the screen or page a host shows any of this on. Nothing here
+becomes its answer as written; a session module's goes only to the host's
+`with_session_stdio` sink), and the screen or page a host shows any of this on. Nothing here
 writes HTML, SVG, color or a terminal screen.
 
 ## Evaluation results
