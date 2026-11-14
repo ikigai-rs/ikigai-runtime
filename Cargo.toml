@@ -71,9 +71,11 @@ wasmtime-wasi = { version = "50.0.0", default-features = false }
 # `default-send-request` (wasmtime's own HTTP client, R-D5 rules it out) and p3.
 wasmtime-wasi-http = { version = "50.0.0", default-features = false }
 # The HTTP method table `wasi:http` requests are mapped through (`Method::{iri, verb}`), so
-# the runtime and ikigai-http cannot disagree. 0.6.0 is the release on ikigai-core 0.3.0;
-# `<0.7.0` (rule 5).
-ikigai-http = "0.6.0"
+# the runtime and ikigai-http cannot disagree. 0.6.0 is the release on ikigai-core 0.3.0.
+# 0.7.0 makes `Method` `#[non_exhaustive]` and has HTTP writes require `urn:cap:kernel:cut`
+# (ledger #1880); this crate compares and iterates `Method`, never matches it exhaustively.
+# `<0.8.0` (rule 5).
+ikigai-http = "0.7.0"
 # The seeded RNG of the deterministic WASI context. 0.10 is the line wasmtime-wasi 50 links.
 rand = { version = "0.10", default-features = false, features = ["std_rng"] }
 serde_json = "1"
