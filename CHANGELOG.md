@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+- **ikigai-core 0.4.0** (the core 0.4.0 cascade, epic #3893, ledger #3923): the workspace now pins
+  ikigai-core 0.4.0 (scope opacity, structured denials), ikigai-module 0.7.0 and ikigai-http
+  0.8.0, and moves to 0.4.0, a minor bump because core types are part of the public API.
+  `Error::Denied` carries core's `Denial`. The `ikigai:runtime` WIT `denied` case is still a
+  string: it carries the denial's message, and a denial coming back from a guest is built from
+  that message. No other behavior changes.
+
 - **Research: tsrs as the TypeScript step** (ledger #3659), behind the test-only `js-fixtures`
   feature; no public API changes. `fixtures/ts-tsrs` compiles TypeScript with tsrs
   7.1.0-beta.tsrs1 (pinned exactly) over an in-memory file system, natively and as a J2

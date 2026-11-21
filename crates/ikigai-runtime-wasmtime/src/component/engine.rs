@@ -446,8 +446,9 @@ impl MountedApp {
         let capability = self.config.ceiling.clamp(caller);
         // A grant the plan refuses (an fs path that could leave the jail root) fails the call,
         // naming the grant: never a silent skip.
-        let refused =
-            |e: ikigai_runtime::PlanError| Error::Denied(format!("{}: {e}", self.config.app));
+        let refused = |e: ikigai_runtime::PlanError| {
+            Error::Denied(format!("{}: {e}", self.config.app).into())
+        };
         let (plan, shape) = match self.config.world {
             World::Endpoint => (
                 wasi_plan(&Grants::from_scopes(std::iter::empty::<String>())).map_err(refused)?,
@@ -582,9 +583,9 @@ impl MountedApp {
                 for function in functions {
                     let name = format!("{instance}#{function}");
                     inst.func_new(function, move |_, _, _, _| {
-                        Err(wasmtime::Error::new(HostRefusal(Error::Denied(format!(
-                            "{name}: {why}"
-                        )))))
+                        Err(wasmtime::Error::new(HostRefusal(Error::Denied(
+                            format!("{name}: {why}").into(),
+                        ))))
                     })
                     .map_err(link)?;
                 }
@@ -618,7 +619,7 @@ impl MountedApp {
         builder.stdout(stdout.clone()).stderr(stderr.clone());
         if self.config.world == World::App {
             apply_plan(&mut builder, &session.plan, &self.config.host)
-                .map_err(|detail| Error::Denied(format!("{}: {detail}", self.config.app)))?;
+                .map_err(|detail| Error::Denied(format!("{}: {detail}", self.config.app).into()))?;
         }
         let state = HostState {
             wasi: builder.build(),

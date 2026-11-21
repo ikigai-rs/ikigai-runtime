@@ -66,7 +66,7 @@ impl HostResolver for Kernel {
                 .unwrap()
                 .push((request.verb, target.clone(), allowed));
             if !allowed {
-                return Err(Error::Denied(target));
+                return Err(Error::Denied(target.into()));
             }
             if target == "urn:host:echo" {
                 // The verb and each named argument, as the kernel received them.

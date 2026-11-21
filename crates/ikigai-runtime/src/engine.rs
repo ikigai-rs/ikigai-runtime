@@ -150,9 +150,9 @@ impl HostResolver for NoHost {
     fn resolve<'a>(&'a self, request: Request, _capability: &'a Capability) -> HostFuture<'a> {
         let target = request.target.as_str().to_string();
         Box::pin(async move {
-            Err(Error::Denied(format!(
-                "{target}: this run has no kernel to call"
-            )))
+            Err(Error::Denied(
+                format!("{target}: this run has no kernel to call").into(),
+            ))
         })
     }
 }

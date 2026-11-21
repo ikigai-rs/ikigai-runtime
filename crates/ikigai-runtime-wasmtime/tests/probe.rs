@@ -57,7 +57,7 @@ fn http_space() -> EndpointSpace {
                 .and_then(|rest| rest.split('/').next())
                 .unwrap_or_default();
             if !inv.capability.allows(&format!("urn:cap:net:{host}")) {
-                return Err(Error::Denied(format!("urn:cap:net:{host}")));
+                return Err(Error::Denied(format!("urn:cap:net:{host}").into()));
             }
             Ok(Representation::new(
                 ReprType::new("text/plain"),

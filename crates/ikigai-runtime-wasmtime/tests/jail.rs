@@ -37,7 +37,7 @@ impl HostResolver for HostName {
                 return Err(Error::NotFound(request.target.as_str().to_string()));
             }
             if !capability.allows(READ_NAME) {
-                return Err(Error::Denied("urn:host:name".to_string()));
+                return Err(Error::Denied("urn:host:name".into()));
             }
             Ok(Representation::new(
                 ReprType::new("text/plain"),

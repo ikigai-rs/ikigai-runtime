@@ -79,7 +79,7 @@ pub(crate) fn wit_error(error: &Error) -> kernel::Error {
     match error {
         Error::Unresolved(iri) => kernel::Error::Unresolved(iri.as_str().to_string()),
         Error::NotFound(m) => kernel::Error::NotFound(m.clone()),
-        Error::Denied(m) => kernel::Error::Denied(m.clone()),
+        Error::Denied(m) => kernel::Error::Denied(m.message().to_string()),
         Error::InvalidArgument { name, detail } => {
             kernel::Error::InvalidArgument(format!("{name}: {detail}"))
         }
@@ -103,7 +103,7 @@ pub(crate) fn core_error(error: kernel::Error) -> Error {
             Ok(iri) => Error::Unresolved(iri),
             Err(_) => Error::NotFound(m),
         },
-        kernel::Error::Denied(m) => Error::Denied(m),
+        kernel::Error::Denied(m) => Error::Denied(m.into()),
         kernel::Error::InvalidArgument(detail) => Error::InvalidArgument {
             name: "request".to_string(),
             detail,
