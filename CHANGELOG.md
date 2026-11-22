@@ -2,6 +2,17 @@
 
 ## Unreleased
 
+- **0.4.1: bound-import values round-trip** (ledger #4033, a patch: no public API changes). A
+  component calling a bound import, and the component it reaches, now agree on every value the
+  type map names. An empty `list<u8>` argument is sent as no bytes, not the text `[]`. An
+  `option`'s `none` argument is left out (absent, as the exporting side reads it), not sent as
+  the text `null`. A `result` answered with an `err` (served as `application/problem+json`)
+  arrives as that `err`, not as an `ok` holding the problem's JSON. A NotFound answer to an
+  `option` result is `none` instead of a trap. A float that JSON cannot hold (NaN, infinity),
+  written as its text, is read back from that text. New hermetic tests in `tests/wat_session.rs`
+  check that a J2 guest handing the host out-of-bounds or overflowing pointers and lengths is
+  refused, never a panic.
+
 - **ikigai-core 0.4.0** (the core 0.4.0 cascade, epic #3893, ledger #3923): the workspace now pins
   ikigai-core 0.4.0 (scope opacity, structured denials), ikigai-module 0.7.0 and ikigai-http
   0.8.0, and moves to 0.4.0, a minor bump because core types are part of the public API.

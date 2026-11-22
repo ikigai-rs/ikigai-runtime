@@ -222,6 +222,10 @@ pub(crate) fn val_from_json(ty: &Type, json: &Json, name: &str) -> Result<Val, E
         | Type::Float32
         | Type::Float64 => match json {
             Json::Number(n) => scalar_from_text(ty, &n.to_string(), name),
+            // A float JSON cannot hold travels as its text (see `val_to_json`).
+            Json::String(text) if matches!(ty, Type::Float32 | Type::Float64) => {
+                scalar_from_text(ty, text, name)
+            }
             _ => Err(shape("a number")),
         },
         Type::Char | Type::String | Type::Enum(_) => match json {
@@ -422,23 +426,32 @@ fn scalar_text(val: &Val) -> Option<String> {
     })
 }
 
-/// A value's bytes as a kernel argument: the inverse of [`val_from_bytes`].
-pub(crate) fn val_to_arg_bytes(val: &Val) -> Vec<u8> {
-    match val {
-        Val::List(items) if items.iter().all(|v| matches!(v, Val::U8(_))) && !items.is_empty() => {
+/// A bound import's argument of type `ty` as the bytes the kernel request carries: the inverse of
+/// [`val_from_bytes`], or `None` for an `option`'s `none`, which is an ABSENT argument (as the
+/// exporting side reads it), never the text `null`. A `list<u8>` is its raw bytes, empty included:
+/// the type decides it, since an empty list's value cannot.
+pub(crate) fn val_to_arg_bytes(ty: &Type, val: &Val) -> Option<Vec<u8>> {
+    match (ty, val) {
+        (Type::Option(_), Val::Option(None)) => None,
+        (Type::Option(o), Val::Option(Some(v))) => val_to_arg_bytes(&o.ty(), v),
+        (Type::List(l), Val::List(items)) if matches!(l.ty(), Type::U8) => Some(
             items
                 .iter()
                 .map(|v| match v {
                     Val::U8(b) => *b,
                     _ => 0,
                 })
-                .collect()
-        }
-        Val::Option(Some(v)) => val_to_arg_bytes(v),
-        other => match scalar_text(other) {
-            Some(text) => text.into_bytes(),
-            None => val_to_json(other).to_string().into_bytes(),
-        },
+                .collect(),
+        ),
+        (_, other) => Some(arg_text(other)),
+    }
+}
+
+/// A non-byte value's argument bytes: its text for a scalar, JSON otherwise.
+fn arg_text(val: &Val) -> Vec<u8> {
+    match scalar_text(val) {
+        Some(text) => text.into_bytes(),
+        None => val_to_json(val).to_string().into_bytes(),
     }
 }
 
@@ -506,8 +519,20 @@ pub(crate) fn val_to_representation(
 
 /// A kernel answer as the result value of a bound import of type `ty` (the inverse of
 /// [`val_to_representation`]): text for scalars, raw bytes for `list<u8>`, JSON for structures.
+/// For a `result`, an `application/problem+json` answer is its `err`, decoded from the problem's
+/// `detail`, as `val_to_representation` wrote it.
 pub(crate) fn representation_to_val(ty: &Type, repr: &Representation) -> Result<Val, Error> {
     match ty {
+        Type::Result(r) if repr.repr_type.media_type == PROBLEM_JSON => {
+            let problem: Json = serde_json::from_slice(&repr.bytes)
+                .map_err(|e| invalid("result", format!("an unreadable problem: {e}")))?;
+            let detail = problem.get("detail").unwrap_or(&Json::Null);
+            let err = match r.err() {
+                Some(err) => Some(Box::new(val_from_json(&err, detail, "result")?)),
+                None => None,
+            };
+            Ok(Val::Result(Err(err)))
+        }
         Type::Result(r) => match r.ok() {
             Some(ok) => Ok(Val::Result(Ok(Some(Box::new(representation_to_val(
                 &ok, repr,
@@ -515,6 +540,24 @@ pub(crate) fn representation_to_val(ty: &Type, repr: &Representation) -> Result<
             None => Ok(Val::Result(Ok(None))),
         },
         other => val_from_bytes(other, &repr.bytes, "result"),
+    }
+}
+
+/// The kernel's answer to a bound import as its result value of type `ty`, or the refusal the
+/// call fails with. NotFound is an `option`'s `none` (the inverse of R-D4's rule); a
+/// `result<_, string>` takes any other refusal as its `err`; a shape that cannot hold a refusal
+/// fails the call with its type intact.
+pub(crate) fn answer_to_val(
+    ty: &Type,
+    answer: Result<Representation, Error>,
+) -> Result<Val, Error> {
+    match (answer, ty) {
+        (Ok(repr), ty) => representation_to_val(ty, &repr),
+        (Err(Error::NotFound(_)), Type::Option(_)) => Ok(Val::Option(None)),
+        (Err(e), Type::Result(r)) if matches!(r.err(), Some(Type::String)) => {
+            Ok(Val::Result(Err(Some(Box::new(Val::String(e.to_string()))))))
+        }
+        (Err(e), _) => Err(e),
     }
 }
 
@@ -552,16 +595,154 @@ mod tests {
 
     #[test]
     fn a_bound_imports_arguments_are_their_text_or_bytes() {
-        assert_eq!(val_to_arg_bytes(&Val::S32(-7)), b"-7");
-        assert_eq!(val_to_arg_bytes(&Val::String("hi".into())), b"hi");
+        assert_eq!(val_to_arg_bytes(&ty("s32"), &Val::S32(-7)).unwrap(), b"-7");
         assert_eq!(
-            val_to_arg_bytes(&Val::List(vec![Val::U8(1), Val::U8(2)])),
+            val_to_arg_bytes(&ty("string"), &Val::String("hi".into())).unwrap(),
+            b"hi"
+        );
+        assert_eq!(
+            val_to_arg_bytes(&ty("(list u8)"), &Val::List(vec![Val::U8(1), Val::U8(2)])).unwrap(),
             vec![1, 2]
         );
-        assert_eq!(val_to_arg_bytes(&Val::Enum("red".into())), b"red");
+        assert_eq!(arg_text(&Val::Enum("red".into())), b"red");
         assert_eq!(
-            val_to_arg_bytes(&Val::Record(vec![("x".into(), Val::U8(1))])),
+            arg_text(&Val::Record(vec![("x".into(), Val::U8(1))])),
             br#"{"x":1}"#
         );
+    }
+
+    /// The type `wat` names, read off a component that only imports `f(p: wat)`.
+    fn ty(wat: &str) -> Type {
+        let engine = wasmtime::Engine::default();
+        let text = format!(r#"(component (import "f" (func (param "p" {wat}))))"#);
+        let component = wasmtime::component::Component::new(&engine, text).expect("the WAT");
+        let ty = component.component_type();
+        let (_, item) = ty.imports(&engine).next().expect("one import");
+        match item.ty {
+            wasmtime::component::types::ComponentItem::ComponentFunc(f) => {
+                f.params().next().expect("one param").1
+            }
+            other => panic!("not a function: {other:?}"),
+        }
+    }
+
+    /// What the exporting side makes of a bound import's argument: absent, or its bytes.
+    fn exported(ty: &Type, bytes: Option<Vec<u8>>) -> Result<Val, Error> {
+        match bytes {
+            Some(bytes) => val_from_bytes(ty, &bytes, "p"),
+            None => Ok(Val::Option(None)),
+        }
+    }
+
+    #[test]
+    fn an_empty_byte_list_crosses_a_bound_import_as_no_bytes() {
+        let bytes = ty("(list u8)");
+        let sent = val_to_arg_bytes(&bytes, &Val::List(vec![]));
+        assert_eq!(sent.as_deref(), Some(&b""[..]));
+        assert_eq!(exported(&bytes, sent).unwrap(), Val::List(vec![]));
+    }
+
+    #[test]
+    fn a_none_argument_crosses_a_bound_import_as_absent() {
+        for wat in ["(option string)", "(option u32)"] {
+            let t = ty(wat);
+            let sent = val_to_arg_bytes(&t, &Val::Option(None));
+            assert_eq!(sent, None, "{wat}");
+            assert_eq!(exported(&t, sent).unwrap(), Val::Option(None), "{wat}");
+        }
+    }
+
+    #[test]
+    fn a_float_json_cannot_hold_round_trips() {
+        let t = ty("(list f64)");
+        for f in [f64::NAN, f64::INFINITY, f64::NEG_INFINITY, -0.0, 2.5] {
+            let json = val_to_json(&Val::List(vec![Val::Float64(f)]));
+            let back = val_from_json(&t, &json, "p").expect("the JSON it wrote");
+            match back {
+                Val::List(items) => match items.as_slice() {
+                    [Val::Float64(g)] => {
+                        assert!(
+                            g.to_bits() == f.to_bits() || (f.is_nan() && g.is_nan()),
+                            "{f} became {g}"
+                        )
+                    }
+                    other => panic!("{other:?}"),
+                },
+                other => panic!("{other:?}"),
+            }
+        }
+    }
+
+    #[test]
+    fn an_err_returned_as_a_value_is_an_err_at_the_importer() {
+        let t = ty("(result string (error string))");
+        let repr = val_to_representation(
+            Some(&t),
+            Some(Val::Result(Err(Some(Box::new(Val::String("no".into())))))),
+            "urn:runtime:app:a:i:f",
+        )
+        .unwrap();
+        assert_eq!(
+            representation_to_val(&t, &repr).unwrap(),
+            Val::Result(Err(Some(Box::new(Val::String("no".into())))))
+        );
+        let ok = val_to_representation(
+            Some(&t),
+            Some(Val::Result(Ok(Some(Box::new(Val::String("yes".into())))))),
+            "urn:runtime:app:a:i:f",
+        )
+        .unwrap();
+        assert_eq!(
+            representation_to_val(&t, &ok).unwrap(),
+            Val::Result(Ok(Some(Box::new(Val::String("yes".into())))))
+        );
+    }
+
+    #[test]
+    fn a_none_answered_is_none_at_the_importer() {
+        let t = ty("(option string)");
+        let err = val_to_representation(Some(&t), Some(Val::Option(None)), "urn:x").unwrap_err();
+        assert_eq!(answer_to_val(&t, Err(err)).unwrap(), Val::Option(None));
+        // Any other refusal keeps its type.
+        assert!(matches!(
+            answer_to_val(&t, Err(Error::Timeout("slow".into()))),
+            Err(Error::Timeout(_))
+        ));
+    }
+
+    #[test]
+    fn malformed_bytes_are_refused_never_a_panic() {
+        for wat in [
+            "string",
+            "char",
+            "u8",
+            "s64",
+            "f32",
+            "bool",
+            "(list string)",
+            "(tuple u8 u8)",
+            "(option char)",
+            "(result u8 (error string))",
+        ] {
+            let t = ty(wat);
+            for bytes in [
+                &b"\xff\xfe"[..],
+                b"",
+                b"[",
+                b"300",
+                b"\"\xc3\x28\"",
+                b"[1,2,3]",
+                b"{\"ok\": -1}",
+            ] {
+                if let Ok(v) = val_from_bytes(&t, bytes, "p") {
+                    // What is accepted is accepted as the type it names.
+                    let _ = val_to_json(&v);
+                }
+            }
+        }
+        assert!(matches!(
+            val_from_bytes(&ty("string"), b"\xff", "p"),
+            Err(Error::InvalidArgument { .. })
+        ));
     }
 }

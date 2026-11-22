@@ -542,34 +542,23 @@ impl MountedApp {
                         let host = Arc::clone(&kernel.host);
                         let capability = kernel.capability.clone();
                         let mut request = Request::new(binding.verb, binding.target.clone());
-                        for ((name, _), value) in ty.params().zip(params) {
-                            request = request.with_arg(
-                                name,
-                                ikigai_core::ArgRef::Inline(values::val_to_arg_bytes(value)),
-                            );
+                        for ((name, pty), value) in ty.params().zip(params) {
+                            // An option's `none` is an absent argument.
+                            if let Some(bytes) = values::val_to_arg_bytes(&pty, value) {
+                                request =
+                                    request.with_arg(name, ikigai_core::ArgRef::Inline(bytes));
+                            }
                         }
                         let answer = host.resolve(request, &capability).await;
-                        let result_ty = ty.results().next();
-                        match (answer, result_ty) {
-                            (Ok(repr), Some(rty)) => {
-                                results[0] = values::representation_to_val(&rty, &repr)
+                        match ty.results().next() {
+                            Some(rty) => {
+                                results[0] = values::answer_to_val(&rty, answer)
                                     .map_err(|e| wasmtime::Error::new(HostRefusal(e)))?;
                                 Ok(())
                             }
-                            (Ok(_), None) => Ok(()),
-                            // A `result<_, string>` takes the refusal as its `err`; any other
-                            // shape cannot hold it, so the call fails with its type intact.
-                            (Err(e), Some(wasmtime::component::types::Type::Result(r)))
-                                if matches!(
-                                    r.err(),
-                                    Some(wasmtime::component::types::Type::String)
-                                ) =>
-                            {
-                                results[0] =
-                                    Val::Result(Err(Some(Box::new(Val::String(e.to_string())))));
-                                Ok(())
-                            }
-                            (Err(e), _) => Err(wasmtime::Error::new(HostRefusal(e))),
+                            None => answer
+                                .map(drop)
+                                .map_err(|e| wasmtime::Error::new(HostRefusal(e))),
                         }
                     })
                 })

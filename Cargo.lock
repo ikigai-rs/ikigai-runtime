@@ -977,7 +977,7 @@ dependencies = [
 
 [[package]]
 name = "ikigai-runtime"
-version = "0.4.0"
+version = "0.4.1"
 dependencies = [
  "blake3",
  "futures",
@@ -987,7 +987,7 @@ dependencies = [
 
 [[package]]
 name = "ikigai-runtime-guest"
-version = "0.4.0"
+version = "0.4.1"
 dependencies = [
  "ikigai-runtime",
  "postcard",
@@ -997,7 +997,7 @@ dependencies = [
 
 [[package]]
 name = "ikigai-runtime-wasmtime"
-version = "0.4.0"
+version = "0.4.1"
 dependencies = [
  "async-trait",
  "blake3",
@@ -1021,7 +1021,7 @@ dependencies = [
 
 [[package]]
 name = "ikigai-runtime-wit"
-version = "0.4.0"
+version = "0.4.1"
 dependencies = [
  "wit-parser 0.261.0",
 ]
