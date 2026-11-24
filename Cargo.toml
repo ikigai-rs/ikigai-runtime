@@ -66,7 +66,7 @@ wasmtime = "50.0.0"
 # wasmtime-wasi carries the WASI p1 path (`p1`, the core-module tier's third convention) and p2
 # (the component tier); it moves in lockstep with wasmtime's major. `default-features = false`
 # here (not on the member) so the member names exactly what it takes; p3 is the member's `p3`
-# feature, built on nightly until 2026-11-12 (R-D17).
+# feature, built on stable by CI's `features` job since Rust 1.100.0 (R-D17).
 wasmtime-wasi = { version = "50.0.0", default-features = false }
 # wasmtime-wasi-http moves with wasmtime's major too. `default-features = false` drops
 # `default-send-request` (wasmtime's own HTTP client, R-D5 rules it out) and p3.

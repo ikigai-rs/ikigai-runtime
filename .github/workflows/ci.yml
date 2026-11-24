@@ -17,6 +17,9 @@ jobs:
     with:
       wasm-lib: true
       wasm-packages: ikigai-runtime
+      # WASI p3 (R-D17): stable since Rust 1.100.0 (2026-11-12), so it gets the shared blocking
+      # feature job (clippy · test · doc) in place of the old non-blocking nightly tripwire.
+      features: ikigai-runtime-wasmtime/p3
 
   # The guest-fixture end-to-end tests (the ABI v1 session, the WASI p1 path, the component tier
   # and R1's probe table), behind the `jail-fixtures` feature. Its own job because the fixtures
@@ -73,17 +76,3 @@ jobs:
         run: cargo clippy -p ikigai-runtime-wasmtime --all-targets --features js-fixtures -- -D warnings
       - name: test (js-fixtures)
         run: cargo test -p ikigai-runtime-wasmtime --features js-fixtures --test js_handler --test js_bindings
-
-  # p3 tripwire (R-D17): p3 is built on nightly in a labeled, NON-BLOCKING job until Rust 1.100.0
-  # ships on 2026-11-12, after which p3 moves to the blocking stable jobs. The component tier
-  # carries no p3 code path yet (its async exports are skipped and reported), so this builds the
-  # workspace with wasmtime-wasi's p3 linked in as a tripwire; it never gates a merge.
-  p3-nightly:
-    name: p3 nightly (non-blocking)
-    runs-on: ubuntu-latest
-    continue-on-error: true
-    steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@nightly
-      - uses: Swatinem/rust-cache@v2
-      - run: cargo build --workspace --features ikigai-runtime-wasmtime/p3
