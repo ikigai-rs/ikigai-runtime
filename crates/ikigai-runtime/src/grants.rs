@@ -692,7 +692,24 @@ mod tests {
             "urn:cap:fs:write:-/ws/secret",
             "urn:cap:fs:delete:-/ws/secret",
         ] {
-            assert_eq!(plan_of(&["urn:cap:fs:read:/ws", deny]), expected, "{deny}");
+            let plan = plan_of(&["urn:cap:fs:read:/ws", deny]);
+            // The exclusion is carried for the engine, which places it against its jail.
+            assert_eq!(
+                plan.fs_denies
+                    .iter()
+                    .map(|d| d.scope.as_str())
+                    .collect::<Vec<_>>(),
+                [deny],
+                "{deny}"
+            );
+            assert_eq!(
+                WasiPlan {
+                    fs_denies: Vec::new(),
+                    ..plan
+                },
+                expected,
+                "{deny}"
+            );
         }
         // With no preopen at all, even an unplaceable exclusion is nothing to the plan.
         assert!(plan_of(&["urn:cap:fs:read:-secret"]).fs.is_empty());
