@@ -15,6 +15,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use ikigai_core::Clock;
+use ikigai_runtime::grants::NetAccess;
 use ikigai_runtime::{ClockAccess, FsAccess, RandomAccess, WasiPlan};
 use rand::SeedableRng;
 use wasmtime_wasi::sockets::SocketAddrUse;
@@ -189,51 +190,24 @@ pub fn check_jail_root_path(root: &Path) -> Result<String, String> {
 /// path)`. The grant is placed against the jail root as configured and, failing that, as the
 /// filesystem spells it (every link resolved: `/private/var/…` for `/var/…` on macOS), the two
 /// spellings ikigai-fs places a scope against, so one grant string names one directory in both.
-/// The directory opened is always the root joined with plain names.
+/// The directory answered is always the root joined with the grant's plain names below it, the
+/// granted directory itself, whether or not it exists yet.
 ///
-/// **No symbolic link between the root and the preopen.** Each component below the jail root,
-/// down to the preopen directory itself, is checked with `symlink_metadata`, and a link anywhere
-/// refuses the grant, naming the link: ikigai-fs refuses a link anywhere in a path, and a
+/// **No symbolic link between the root and the preopen.** Each existing component below the jail
+/// root, down to the preopen directory itself, is checked with `symlink_metadata`, and a link
+/// anywhere refuses the grant, naming the link: ikigai-fs refuses a link anywhere in a path, and a
 /// preopen opened through one would serve the link's target (`<jail>/data` → a directory
 /// outside the jail) under a grant that names `<jail>/data`. The root itself may be a link; that
-/// is the canonical-spelling case above, and a root resolving to `/` is refused at mount. A
-/// component that does not exist ends the walk, and the preopen reports it. Links INSIDE the
-/// preopened directory are wasmtime's: cap-std refuses one that leaves the preopen.
+/// is the canonical-spelling case above, and a root resolving to `/` is refused at mount. This
+/// check names the link early; [`open_no_follow`] is what holds the preopen to it, since it opens
+/// each component without following a link. Links INSIDE the preopened directory are wasmtime's:
+/// cap-std refuses one that leaves the preopen.
 fn place(host_path: &str, root: &Path) -> Result<(PathBuf, String), String> {
-    use ikigai_runtime::grants::guest_path_in_jail;
-    let spelled = check_jail_root_path(root)?;
-    let (base, guest) = match guest_path_in_jail(host_path, &spelled) {
-        Ok(guest) => (root.to_path_buf(), guest),
-        Err(refusal) => {
-            // ambient: fs: resolves the host-configured jail root (never the grant path) through its links, so a grant spelled the way the filesystem spells the root still places
-            #[allow(clippy::disallowed_methods)]
-            let resolved = std::fs::canonicalize(root);
-            resolved
-                .ok()
-                .filter(|canonical| canonical.as_path() != root)
-                .and_then(|canonical| {
-                    let spelled = check_jail_root_path(&canonical).ok()?;
-                    let guest = guest_path_in_jail(host_path, &spelled).ok()?;
-                    Some((canonical, guest))
-                })
-                .ok_or(refusal)?
-        }
-    };
+    let (base, guest) = place_base(host_path, root)?;
     let relative = Path::new(guest.trim_start_matches('/'));
-    if !relative
-        .components()
-        .all(|c| matches!(c, Component::Normal(_)))
-    {
-        return Err(format!(
-            "`{host_path}` does not name a path under the jail root"
-        ));
-    }
     let mut walked = base.clone();
     for name in relative.components() {
         walked.push(name);
-        // This walk checks each name and then preopens the path by name, so a link swapped in
-        // between the two is not seen. Ledger #2380 replaces it with a no-follow `openat` walk
-        // from a handle on the root, which changes this call and the root canonicalization above.
         // ambient: fs: reads only the link bit of each component between the host-configured jail root and a granted preopen, to refuse a grant that passes through a symbolic link
         #[allow(clippy::disallowed_methods)]
         let meta = std::fs::symlink_metadata(&walked);
@@ -249,13 +223,251 @@ fn place(host_path: &str, root: &Path) -> Result<(PathBuf, String), String> {
             Err(_) => break,
         }
     }
-    Ok((walked, guest))
+    Ok((base.join(relative), guest))
+}
+
+/// The root spelling a grant places against (as configured, else as the filesystem spells it)
+/// and the guest path, whose names below `/` are plain.
+fn place_base(host_path: &str, root: &Path) -> Result<(PathBuf, String), String> {
+    use ikigai_runtime::grants::guest_path_in_jail;
+    let spelled = check_jail_root_path(root)?;
+    let (base, guest) = match guest_path_in_jail(host_path, &spelled) {
+        Ok(guest) => (root.to_path_buf(), guest),
+        Err(refusal) => canonical_root(root)
+            .filter(|canonical| canonical.as_path() != root)
+            .and_then(|canonical| {
+                let spelled = check_jail_root_path(&canonical).ok()?;
+                let guest = guest_path_in_jail(host_path, &spelled).ok()?;
+                Some((canonical, guest))
+            })
+            .ok_or(refusal)?,
+    };
+    if !Path::new(guest.trim_start_matches('/'))
+        .components()
+        .all(|c| matches!(c, Component::Normal(_)))
+    {
+        return Err(format!(
+            "`{host_path}` does not name a path under the jail root"
+        ));
+    }
+    Ok((base, guest))
+}
+
+/// The jail root as the filesystem spells it, every link resolved.
+fn canonical_root(root: &Path) -> Option<PathBuf> {
+    // ambient: fs: resolves the host-configured jail root (never the grant path) through its links, so a scope spelled the way the filesystem spells the root still places
+    #[allow(clippy::disallowed_methods)]
+    let canonical = std::fs::canonicalize(root);
+    canonical.ok()
+}
+
+// The placement of an `fs` exclusion below is a COPY of ikigai-fs 0.6.0's (`Roots`, `Rule::map`,
+// `Rule::map_resolved`, `Jail::on_disk_names`, `caseless_eq`), because ikigai-fs keeps it
+// private and this runtime cannot depend on an unpublished change to it. It belongs in ikigai-fs,
+// beside the ACL it serves, as one public function this copy is then replaced by. Until then any
+// change to how ikigai-fs places a deny must be made here too.
+
+/// The names, below the jail root, an `fs` exclusion binds, as ikigai-fs maps it: its path placed
+/// against the root as mounted and as the filesystem spells it, and again with its existing
+/// prefix resolved through the host's links (`current/secret` binds `releases/v2/secret`),
+/// against the canonical root. An exclusion naming the root or an ancestor of it answers `[]`
+/// only when it names the root itself; an ancestor covers the jail less specifically than any
+/// grant inside it, so it binds no preopen.
+fn deny_names_in_jail(deny: &str, root: &Path) -> Vec<Vec<String>> {
+    let segments = |path: &str| -> Vec<String> {
+        path.split('/')
+            .filter(|s| !s.is_empty())
+            .map(str::to_string)
+            .collect()
+    };
+    let mut roots: Vec<Vec<String>> = Vec::new();
+    if let Ok(spelled) = check_jail_root_path(root) {
+        roots.push(segments(&spelled));
+    }
+    let canonical = canonical_root(root)
+        .and_then(|c| check_jail_root_path(&c).ok())
+        .map(|c| segments(&c));
+    if let Some(canonical) = &canonical {
+        if !roots.contains(canonical) {
+            roots.push(canonical.clone());
+        }
+    }
+    let scope = segments(deny);
+    let mut out: Vec<Vec<String>> = roots
+        .iter()
+        .filter_map(|r| scope.strip_prefix(r.as_slice()).map(<[String]>::to_vec))
+        .collect();
+    if let (Some(canonical), Some(resolved)) = (&canonical, resolve_host_path(Path::new(deny))) {
+        if let Ok(resolved) = check_jail_root_path(&resolved).or_else(|_| {
+            // The resolved path may be `/` itself, which is no jail root but is a path.
+            (resolved == Path::new("/"))
+                .then(|| "/".to_string())
+                .ok_or(())
+        }) {
+            if let Some(rest) = segments(&resolved).strip_prefix(canonical.as_slice()) {
+                let rest = rest.to_vec();
+                if !out.contains(&rest) {
+                    out.push(rest);
+                }
+            }
+        }
+    }
+    out
+}
+
+/// A host path with its longest existing prefix resolved through every link, and the rest
+/// appended as written (ikigai-fs's `resolve_host_path`).
+fn resolve_host_path(path: &Path) -> Option<PathBuf> {
+    let mut existing = path.to_path_buf();
+    let mut rest: Vec<std::ffi::OsString> = Vec::new();
+    loop {
+        // ambient: fs: resolves an fs EXCLUSION's path through the host's links (never to open it), so an exclusion spelled through a link binds the directory it leads to
+        #[allow(clippy::disallowed_methods)]
+        let resolved = std::fs::canonicalize(&existing);
+        if let Ok(mut resolved) = resolved {
+            resolved.extend(rest.iter().rev());
+            return Some(resolved);
+        }
+        rest.push(existing.file_name()?.to_os_string());
+        if !existing.pop() {
+            return None;
+        }
+    }
+}
+
+/// Names below `root` in their on-disk spelling, as far as they exist without passing a link;
+/// past that, as written. Answers the names and how many are on disk (ikigai-fs's
+/// `on_disk_names`): on a volume that folds case, `WS` is the directory listed as `ws`.
+fn on_disk_names(root: &Path, names: &[String]) -> (Vec<String>, usize) {
+    let mut out: Vec<String> = Vec::new();
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::{DirEntryExt, MetadataExt};
+        let mut dir = root.to_path_buf();
+        for name in names {
+            let path = dir.join(name);
+            // ambient: fs: reads the inode and link bit of an fs EXCLUSION's components below the host-configured jail root, to learn their on-disk names; nothing is opened for the guest
+            #[allow(clippy::disallowed_methods)]
+            let Ok(meta) = std::fs::symlink_metadata(&path) else {
+                break;
+            };
+            if meta.file_type().is_symlink() {
+                break;
+            }
+            // ambient: fs: lists the directory holding an exclusion's component to find the entry with its inode, its on-disk name
+            #[allow(clippy::disallowed_methods)]
+            let Ok(entries) = std::fs::read_dir(&dir) else {
+                break;
+            };
+            let real = entries
+                .flatten()
+                .find(|e| e.ino() == meta.ino())
+                .and_then(|e| e.file_name().into_string().ok());
+            let Some(real) = real else { break };
+            dir.push(&real);
+            out.push(real);
+        }
+    }
+    #[cfg(not(unix))]
+    let _ = root;
+    let on_disk = out.len();
+    out.extend(names[on_disk..].iter().cloned());
+    (out, on_disk)
+}
+
+/// Whether a volume that folds case could open `a` and `b` as one name. ikigai-fs also folds
+/// Unicode normalization; this copy folds case only, so it binds a little less widely there.
+fn caseless_eq(a: &str, b: &str) -> bool {
+    a == b || a.to_lowercase() == b.to_lowercase()
+}
+
+/// The first exclusion a preopen at `preopen` (names below the jail root) would serve, with the
+/// names it binds: one whose mapped names are the preopen's or under them, compared by on-disk
+/// name where the exclusion exists and without case where it does not, as ikigai-fs compares.
+fn deny_inside<'a>(
+    plan: &'a WasiPlan,
+    access: FsAccess,
+    preopen: &[String],
+    root: &Path,
+) -> Option<(&'a ikigai_runtime::grants::FsDeny, String)> {
+    let (preopen, _) = on_disk_names(root, preopen);
+    plan.fs_denies
+        .iter()
+        .filter(|deny| deny.bound_by(access))
+        .find_map(|deny| {
+            deny_names_in_jail(&deny.host_path, root)
+                .into_iter()
+                .find_map(|names| {
+                    let (names, on_disk) = on_disk_names(root, &names);
+                    let inside = names.len() >= preopen.len()
+                        && names.iter().zip(&preopen).enumerate().all(|(i, (d, p))| {
+                            if i < on_disk {
+                                d == p
+                            } else {
+                                caseless_eq(d, p)
+                            }
+                        });
+                    inside.then(|| format!("/{}", names.join("/")))
+                })
+                .map(|names| (deny, names))
+        })
+}
+
+/// Open `relative` (plain names) below `base` one component at a time from a handle on `base`,
+/// never following a link: a link anywhere below the root refuses the open, so the directory
+/// opened is the one [`place`] checked even if a link is swapped in afterwards. Answers the
+/// handle and a path naming exactly that open directory, for wasmtime's path-taking preopen.
+#[cfg(unix)]
+fn open_no_follow(base: &Path, relative: &Path) -> Result<(std::os::fd::OwnedFd, PathBuf), String> {
+    use rustix::fs::{Mode, OFlags};
+    use std::os::fd::AsRawFd;
+    let flags = OFlags::RDONLY | OFlags::DIRECTORY | OFlags::CLOEXEC;
+    // ambient: fs: the preopen's anchor, a handle on the host-configured jail root (its own links followed: host configuration, not a grant); every grant name is then opened relative to it
+    #[allow(clippy::disallowed_methods)]
+    let mut dir = rustix::fs::open(base, flags, Mode::empty())
+        .map_err(|e| format!("the jail root `{}` cannot be opened ({e})", base.display()))?;
+    let mut walked = base.to_path_buf();
+    for name in relative.components() {
+        walked.push(name);
+        let next = rustix::fs::openat(
+            &dir,
+            name.as_os_str(),
+            flags | OFlags::NOFOLLOW,
+            Mode::empty(),
+        )
+        .map_err(|e| {
+            if e == rustix::io::Errno::LOOP || e == rustix::io::Errno::NOTDIR {
+                format!(
+                    "`{}` is a symbolic link or not a directory; an fs grant path must not \
+                         pass through a link, since the preopen would serve the link's target",
+                    walked.display()
+                )
+            } else {
+                format!("`{}` cannot be opened ({e})", walked.display())
+            }
+        })?;
+        dir = next;
+    }
+    // wasmtime-wasi 50 preopens only by path. On Linux `/proc/self/fd/<n>` is that path: opening
+    // it opens the directory the handle holds, never a name looked up again, so a link swapped
+    // in after this walk is not seen. macOS's `/dev/fd/<n>` does not open as a directory, so
+    // there the checked path itself is answered, and the window between this walk and
+    // wasmtime's own open stays open until wasmtime-wasi takes an opened directory.
+    #[cfg(target_os = "linux")]
+    let path = PathBuf::from(format!("/proc/self/fd/{}", dir.as_raw_fd()));
+    #[cfg(not(target_os = "linux"))]
+    let path = {
+        let _ = dir.as_raw_fd();
+        walked
+    };
+    Ok((dir, path))
 }
 
 /// Apply a plan's grants to a deterministic builder. Errors name the grant the host could not
 /// serve: an `fs` grant with no jail root, one outside the jail root (naming the root), one whose
-/// path passes through a symbolic link below the root (naming the link), a preopen that does not
-/// exist.
+/// path passes through a symbolic link below the root (naming the link), one whose preopen would
+/// serve a path an `fs` exclusion names however it is spelled (naming the exclusion), a preopen
+/// that does not exist.
 pub fn apply_plan(
     builder: &mut WasiCtxBuilder,
     plan: &WasiPlan,
@@ -268,19 +480,41 @@ pub fn apply_plan(
                 preopen.host_path
             ));
         };
-        let (dir, guest) = place(&preopen.host_path, root)
-            .map_err(|reason| format!("urn:cap:fs grant for `{}`: {reason}", preopen.host_path))?;
+        let refuse =
+            |reason: String| format!("urn:cap:fs grant for `{}`: {reason}", preopen.host_path);
+        let (dir, guest) = place(&preopen.host_path, root).map_err(refuse)?;
+        let names: Vec<String> = guest
+            .split('/')
+            .filter(|s| !s.is_empty())
+            .map(str::to_string)
+            .collect();
+        if let Some((deny, bound)) = deny_inside(plan, preopen.access, &names, root) {
+            return Err(refuse(format!(
+                "the exclusion {} binds `{bound}` below the jail root, at or under this \
+                 preopen (`{guest}`), and a WASI preopen cannot exclude a path inside it; the \
+                 grant is refused rather than widened",
+                deny.scope
+            )));
+        }
         let perms = match preopen.access {
             FsAccess::ReadOnly => FsPerms::ReadOnly,
             FsAccess::ReadWrite => FsPerms::ReadWrite,
         };
-        builder.preopened_dir(&dir, &guest, perms).map_err(|e| {
-            format!(
-                "urn:cap:fs grant for `{}`: preopen {}: {e:#}",
-                preopen.host_path,
-                dir.display()
-            )
-        })?;
+        let shown = dir.display();
+        #[cfg(unix)]
+        {
+            let (base, _) = place_base(&preopen.host_path, root).map_err(refuse)?;
+            let (handle, opened) = open_no_follow(&base, Path::new(guest.trim_start_matches('/')))
+                .map_err(|reason| refuse(format!("preopen {shown}: {reason}")))?;
+            builder
+                .preopened_dir(&opened, &guest, perms)
+                .map_err(|e| refuse(format!("preopen {shown}: {e:#}")))?;
+            drop(handle);
+        }
+        #[cfg(not(unix))]
+        builder
+            .preopened_dir(&dir, &guest, perms)
+            .map_err(|e| refuse(format!("preopen {shown}: {e:#}")))?;
     }
     for name in &plan.env_names {
         if let Some(value) = host.env.get(name) {
@@ -295,40 +529,62 @@ pub fn apply_plan(
         builder.secure_random(rand::rngs::StdRng::from_rng(&mut rand::rng()));
     }
     if !plan.net.ip_rules.is_empty() || plan.net.implicit_unspecified_bind {
-        let rules: Vec<String> = plan.net.ip_rules.clone();
-        let implicit = plan.net.implicit_unspecified_bind;
-        let open = rules.is_empty() && implicit; // Root: every address.
+        let open = plan.net.ip_rules.is_empty() && plan.net.implicit_unspecified_bind; // Root.
+        let net = Socket::of(&plan.net);
         builder
             .allow_tcp(true)
             .allow_udp(true)
             .socket_addr_check(move |addr, usage| {
-                let ok = open || admits(&rules, implicit, addr, usage);
+                let ok = open || net.admits(addr, usage);
                 Box::pin(async move { ok })
             });
     }
     Ok(())
 }
 
-/// Whether a socket use is admitted by the plan's IP rules. An outbound connect needs the
-/// implicit unspecified bind (`0.0.0.0:0`, measured, R1 B1); a rule `<ip>` admits any port,
-/// `<ip>:<port>` exactly that one.
-fn admits(rules: &[String], implicit: bool, addr: SocketAddr, usage: SocketAddrUse) -> bool {
-    if implicit
-        && matches!(usage, SocketAddrUse::TcpBind | SocketAddrUse::UdpBind)
-        && addr.ip().is_unspecified()
-        && addr.port() == 0
-    {
-        return true;
-    }
-    if !matches!(usage, SocketAddrUse::TcpConnect | SocketAddrUse::UdpSend) {
-        return false;
-    }
-    rules.iter().any(|rule| match rule.rsplit_once(':') {
-        Some((ip, port)) if port.bytes().all(|b| b.is_ascii_digit()) => {
-            ip == addr.ip().to_string() && port == addr.port().to_string()
+/// What a guest's socket uses are answered under: the plan's socket access list as a capability,
+/// asked of ikigai-http, so a socket and an HTTP request read one access list one way.
+#[derive(Clone, Debug)]
+struct Socket {
+    access: ikigai_core::Capability,
+    implicit_unspecified_bind: bool,
+}
+
+impl Socket {
+    fn of(net: &NetAccess) -> Socket {
+        Socket {
+            access: ikigai_core::Capability::scoped(net.socket_scopes.iter().cloned()),
+            implicit_unspecified_bind: net.implicit_unspecified_bind,
         }
-        _ => rule == &addr.ip().to_string(),
-    })
+    }
+
+    /// Whether a socket use is admitted. An outbound connect needs the implicit unspecified bind
+    /// (`0.0.0.0:0`, measured, R1 B1); a connect or send is admitted exactly when
+    /// `ikigai_http::net_allows_port` admits its address and port under the access list (a
+    /// socket has no path, so `/`). Nothing else (listening, any other bind) is admitted.
+    fn admits(&self, addr: SocketAddr, usage: SocketAddrUse) -> bool {
+        if self.implicit_unspecified_bind
+            && matches!(usage, SocketAddrUse::TcpBind | SocketAddrUse::UdpBind)
+            && addr.ip().is_unspecified()
+            && addr.port() == 0
+        {
+            return true;
+        }
+        matches!(usage, SocketAddrUse::TcpConnect | SocketAddrUse::UdpSend)
+            && ikigai_http::net_allows_port(
+                &self.access,
+                &addr.ip().to_string(),
+                Some(addr.port()),
+                "/",
+            )
+    }
+}
+
+/// Whether the plan's socket rules admit a use (the check [`apply_plan`] installs, short of the
+/// root plan's every-address case).
+#[cfg(test)]
+fn socket_admits(net: &NetAccess, addr: SocketAddr, usage: SocketAddrUse) -> bool {
+    Socket::of(net).admits(addr, usage)
 }
 
 #[cfg(test)]
@@ -452,41 +708,328 @@ mod tests {
         assert_ne!(seed_of(b"ab", b"c"), seed_of(b"a", b"bc"));
     }
 
+    fn plan_of(scopes: &[&str]) -> WasiPlan {
+        ikigai_runtime::wasi_plan(&ikigai_runtime::Grants::from_scopes(scopes.iter().copied()))
+            .unwrap()
+    }
+
+    fn addr(s: &str) -> SocketAddr {
+        s.parse().unwrap()
+    }
+
     #[test]
     fn an_ip_rule_admits_exactly_its_address_and_the_implicit_bind() {
-        let rules = vec!["10.0.0.5:443".to_string()];
-        let addr = |s: &str| s.parse::<SocketAddr>().unwrap();
-        assert!(admits(
-            &rules,
-            true,
+        let net = plan_of(&["urn:cap:net:10.0.0.5:443"]).net;
+        assert!(socket_admits(
+            &net,
             addr("0.0.0.0:0"),
             SocketAddrUse::TcpBind
         ));
-        assert!(admits(
-            &rules,
-            true,
+        assert!(socket_admits(
+            &net,
             addr("10.0.0.5:443"),
             SocketAddrUse::TcpConnect
         ));
-        assert!(!admits(
-            &rules,
-            true,
+        assert!(!socket_admits(
+            &net,
             addr("10.0.0.5:80"),
             SocketAddrUse::TcpConnect
         ));
-        assert!(!admits(
-            &rules,
-            true,
+        assert!(!socket_admits(
+            &net,
             addr("10.0.0.6:443"),
             SocketAddrUse::TcpConnect
         ));
         // Listening is not connecting: an outbound grant never opens a server socket.
-        assert!(!admits(
-            &rules,
-            true,
+        assert!(!socket_admits(
+            &net,
             addr("10.0.0.5:443"),
             SocketAddrUse::TcpListen
         ));
+        // A host or glob grant is `wasi:http`'s, never a socket's.
+        let net = plan_of(&["urn:cap:net:10.0.0.5:443", "urn:cap:net:*"]).net;
+        assert!(!socket_admits(
+            &net,
+            addr("10.0.0.6:443"),
+            SocketAddrUse::TcpConnect
+        ));
+    }
+
+    /// ikigai-http reads `net:10.0.0.5` + `net:-10.0.0.5:22` as "every port but 22", and an
+    /// exclusion that ties an allow (the same address and port) as a refusal.
+    #[test]
+    fn a_net_exclusion_binds_the_socket_as_it_binds_ikigai_http() {
+        for (scopes, port) in [
+            (["urn:cap:net:10.0.0.5", "urn:cap:net:-10.0.0.5:22"], 22),
+            (
+                ["urn:cap:net:10.0.0.5:443", "urn:cap:net:-10.0.0.5:443"],
+                443,
+            ),
+        ] {
+            let cap = ikigai_core::Capability::scoped(scopes);
+            assert!(
+                !ikigai_http::net_allows_port(&cap, "10.0.0.5", Some(port), "/"),
+                "ikigai-http refuses 10.0.0.5:{port} under {scopes:?}"
+            );
+            let plan = ikigai_runtime::wasi_plan(&ikigai_runtime::Grants::from_capability(&cap));
+            if let Ok(plan) = plan {
+                let at: SocketAddr = format!("10.0.0.5:{port}").parse().unwrap();
+                assert!(
+                    !socket_admits(&plan.net, at, SocketAddrUse::TcpConnect),
+                    "the socket admits {at}, which {scopes:?} excludes; plan.net = {:?}",
+                    plan.net
+                );
+            }
+        }
+        // The rest of the address is still served.
+        let net = plan_of(&["urn:cap:net:10.0.0.5", "urn:cap:net:-10.0.0.5:22"]).net;
+        assert!(socket_admits(
+            &net,
+            addr("10.0.0.5:443"),
+            SocketAddrUse::TcpConnect
+        ));
+        assert!(!socket_admits(
+            &net,
+            addr("10.0.0.5:22"),
+            SocketAddrUse::UdpSend
+        ));
+    }
+
+    /// A malformed exclusion: the holder meant to exclude something and nobody can tell what,
+    /// so ikigai-http refuses every address under it, and so does the socket.
+    #[test]
+    fn a_malformed_net_exclusion_refuses_every_socket_as_ikigai_http_does() {
+        let scopes = ["urn:cap:net:10.0.0.5:443", "urn:cap:net:-10.0.0.5:notaport"];
+        let cap = ikigai_core::Capability::scoped(scopes);
+        assert!(!ikigai_http::net_allows_port(
+            &cap,
+            "10.0.0.5",
+            Some(443),
+            "/"
+        ));
+        let net = plan_of(&scopes).net;
+        assert!(!socket_admits(
+            &net,
+            addr("10.0.0.5:443"),
+            SocketAddrUse::TcpConnect
+        ));
+    }
+
+    /// A socket carries no path, so an exclusion of a path on an address the run may reach by
+    /// socket is refused with a sentence; one on a host name is `wasi:http`'s and changes nothing.
+    #[test]
+    fn a_path_scoped_net_exclusion_under_an_ip_grant_refuses_the_plan() {
+        for deny in ["urn:cap:net:-10.0.0.5/admin", "urn:cap:net:-*/admin"] {
+            let err = ikigai_runtime::wasi_plan(&ikigai_runtime::Grants::from_scopes([
+                "urn:cap:net:10.0.0.5",
+                deny,
+            ]))
+            .unwrap_err();
+            assert_eq!(err.scope, deny);
+            assert!(
+                err.reason.contains("10.0.0.5") && err.reason.contains("path"),
+                "{err}"
+            );
+        }
+        let net = plan_of(&["urn:cap:net:10.0.0.5", "urn:cap:net:-api.example.com/admin"]).net;
+        assert!(socket_admits(
+            &net,
+            addr("10.0.0.5:443"),
+            SocketAddrUse::TcpConnect
+        ));
+    }
+
+    /// Build the plan from `scopes` and apply it for a jail at `root`: Ok when both accept.
+    #[cfg(unix)]
+    fn serve(scopes: &[String], root: &Path) -> Result<WasiPlan, String> {
+        let plan =
+            ikigai_runtime::wasi_plan(&ikigai_runtime::Grants::from_scopes(scopes.iter().cloned()))
+                .map_err(|e| e.to_string())?;
+        let host = AppHost {
+            fs_root: Some(root.to_path_buf()),
+            ..AppHost::default()
+        };
+        let mut builder = deterministic_builder(&[0; 32]);
+        apply_plan(&mut builder, &plan, &host)?;
+        Ok(plan)
+    }
+
+    /// An `fs` exclusion spelled against the root's OTHER spelling (the one `place` itself
+    /// accepts for a grant) names a directory inside the preopen; ikigai-fs places a deny
+    /// against both spellings.
+    #[cfg(unix)]
+    #[test]
+    fn an_fs_exclusion_spelled_against_the_resolved_root_refuses_the_preopen() {
+        let base =
+            std::env::temp_dir().join(format!("ikigai-runtime-deny-b1-{}", std::process::id()));
+        let real = base.join("real");
+        let link = base.join("link");
+        std::fs::create_dir_all(real.join("ws").join("secret")).unwrap();
+        std::os::unix::fs::symlink(&real, &link).unwrap();
+        let mounted = check_jail_root_path(&link).unwrap();
+        let resolved = check_jail_root_path(&std::fs::canonicalize(&real).unwrap()).unwrap();
+        let scopes = [
+            format!("urn:cap:fs:read:{mounted}/ws"),
+            format!("urn:cap:fs:read:-{resolved}/ws/secret"),
+        ];
+        let outcome = serve(&scopes, &link);
+        // Without the exclusion the same preopen is served.
+        let alone = serve(&scopes[..1], &link);
+        let _ = std::fs::remove_dir_all(&base);
+        let err = outcome.expect_err("the preopen of `ws` serves `secret`, which is excluded");
+        assert!(err.contains(&scopes[1]), "{err}");
+        assert!(alone.is_ok(), "{alone:?}");
+    }
+
+    /// An `fs` exclusion spelled through a link INSIDE the jail (`current/secret` for
+    /// `releases/v2/secret`): ikigai-fs resolves a deny through links and binds the file the
+    /// link leads to.
+    #[cfg(unix)]
+    #[test]
+    fn an_fs_exclusion_spelled_through_a_link_inside_the_jail_refuses_the_preopen() {
+        let base =
+            std::env::temp_dir().join(format!("ikigai-runtime-deny-b2-{}", std::process::id()));
+        let root = std::fs::canonicalize({
+            std::fs::create_dir_all(base.join("jail")).unwrap();
+            base.join("jail")
+        })
+        .unwrap();
+        std::fs::create_dir_all(root.join("releases").join("v2").join("secret")).unwrap();
+        std::os::unix::fs::symlink(root.join("releases").join("v2"), root.join("current")).unwrap();
+        let spelled = check_jail_root_path(&root).unwrap();
+        let scopes = [
+            format!("urn:cap:fs:read:{spelled}/releases"),
+            format!("urn:cap:fs:read:-{spelled}/current/secret"),
+        ];
+        let outcome = serve(&scopes, &root);
+        // The same exclusion beside a preopen it does not reach changes nothing.
+        std::fs::create_dir_all(root.join("other")).unwrap();
+        let apart = serve(
+            &[
+                format!("urn:cap:fs:read:{spelled}/other"),
+                scopes[1].clone(),
+            ],
+            &root,
+        );
+        let _ = std::fs::remove_dir_all(&base);
+        let err = outcome.expect_err("the preopen of `releases` serves `releases/v2/secret`");
+        assert!(err.contains("/releases/v2/secret"), "{err}");
+        assert!(apart.is_ok(), "{apart:?}");
+    }
+
+    /// macOS's case-insensitive APFS only: an `fs` exclusion spelled in another case names the
+    /// same directory on disk, and ikigai-fs maps a deny to its on-disk names.
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn an_fs_exclusion_spelled_in_another_case_refuses_the_preopen() {
+        let base =
+            std::env::temp_dir().join(format!("ikigai-runtime-deny-b3-{}", std::process::id()));
+        std::fs::create_dir_all(base.join("ws").join("secret")).unwrap();
+        let root = std::fs::canonicalize(&base).unwrap();
+        let spelled = check_jail_root_path(&root).unwrap();
+        let scopes = [
+            format!("urn:cap:fs:read:{spelled}/ws"),
+            format!("urn:cap:fs:read:-{spelled}/WS/Secret"),
+        ];
+        let outcome = serve(&scopes, &root);
+        let _ = std::fs::remove_dir_all(&base);
+        assert!(
+            outcome.is_err(),
+            "the preopen of `{spelled}/ws` serves `secret`, which `{}` excludes: {outcome:?}",
+            scopes[1]
+        );
+    }
+
+    /// An exclusion naming something not on disk is compared without case, as ikigai-fs does:
+    /// the volume's rules for a name that does not exist yet are unknowable.
+    #[cfg(unix)]
+    #[test]
+    fn an_fs_exclusion_of_a_missing_path_is_compared_without_case() {
+        let base =
+            std::env::temp_dir().join(format!("ikigai-runtime-deny-case-{}", std::process::id()));
+        std::fs::create_dir_all(base.join("ws")).unwrap();
+        let root = std::fs::canonicalize(&base).unwrap();
+        let spelled = check_jail_root_path(&root).unwrap();
+        // `ws` exists, so it is compared by its on-disk name; `Later` does not, so any case.
+        let outcome = serve(
+            &[
+                format!("urn:cap:fs:read:{spelled}/ws"),
+                format!("urn:cap:fs:read:-{spelled}/ws/Later"),
+            ],
+            &root,
+        );
+        let _ = std::fs::remove_dir_all(&base);
+        assert!(outcome.is_err(), "{outcome:?}");
+    }
+
+    /// The directory `place` answers is the granted one even when a component is missing: never
+    /// the path walked so far, an ancestor that holds more than the grant.
+    #[test]
+    fn place_answers_the_granted_directory_when_a_component_is_missing() {
+        let root =
+            std::env::temp_dir().join(format!("ikigai-runtime-place-c-{}", std::process::id()));
+        std::fs::create_dir_all(&root).unwrap();
+        let spelled = check_jail_root_path(&root).unwrap();
+        let placed = place(&format!("{spelled}/missing/sub/leaf"), &root);
+        let _ = std::fs::remove_dir_all(&root);
+        let (dir, guest) = placed.unwrap();
+        assert_eq!(guest, "/missing/sub/leaf");
+        assert_eq!(
+            dir,
+            root.join("missing").join("sub").join("leaf"),
+            "the directory to open is not the granted one"
+        );
+    }
+
+    /// A link swapped in AFTER placement (where `place` saw a missing component, or a plain
+    /// directory) is not followed: the preopen is opened one component at a time without
+    /// following a link, and refuses the link.
+    #[cfg(unix)]
+    #[test]
+    fn a_link_swapped_in_after_placement_is_refused_at_the_open() {
+        let base = std::env::temp_dir().join(format!("ikigai-runtime-swap-{}", std::process::id()));
+        let root = base.join("jail");
+        let outside = base.join("outside");
+        std::fs::create_dir_all(root.join("data")).unwrap();
+        std::fs::create_dir_all(outside.join("sub")).unwrap();
+        let spelled = check_jail_root_path(&root).unwrap();
+        // Placed while `data` is a plain directory and `missing` does not exist.
+        let placed_data = place(&format!("{spelled}/data"), &root);
+        let placed_missing = place(&format!("{spelled}/missing/sub"), &root);
+        // Then both become links out of the jail.
+        std::fs::remove_dir(root.join("data")).unwrap();
+        std::os::unix::fs::symlink(&outside, root.join("data")).unwrap();
+        std::os::unix::fs::symlink(&outside, root.join("missing")).unwrap();
+        let opened_data = open_no_follow(&root, Path::new("data"));
+        let opened_missing = open_no_follow(&root, Path::new("missing/sub"));
+        let _ = std::fs::remove_dir_all(&base);
+        assert_eq!(placed_data.unwrap().0, root.join("data"));
+        assert_eq!(placed_missing.unwrap().0, root.join("missing").join("sub"));
+        for opened in [opened_data, opened_missing] {
+            let err = opened.unwrap_err();
+            assert!(err.contains("symbolic link"), "{err}");
+        }
+    }
+
+    /// The path handed to wasmtime names the very directory the no-follow walk opened.
+    #[cfg(unix)]
+    #[test]
+    fn a_preopen_is_served_from_the_directory_the_walk_opened() {
+        let base = std::env::temp_dir().join(format!("ikigai-runtime-walk-{}", std::process::id()));
+        let root = base.join("jail");
+        std::fs::create_dir_all(root.join("ws").join("in")).unwrap();
+        std::fs::write(root.join("ws").join("in").join("marker"), b"x").unwrap();
+        let (handle, path) = open_no_follow(&root, Path::new("ws/in")).unwrap();
+        let seen = std::fs::read(path.join("marker"));
+        let scopes = [format!(
+            "urn:cap:fs:read:{}/ws/in",
+            check_jail_root_path(&root).unwrap()
+        )];
+        let served = serve(&scopes, &root);
+        drop(handle);
+        let _ = std::fs::remove_dir_all(&base);
+        assert_eq!(seen.unwrap(), b"x");
+        assert!(served.is_ok(), "{served:?}");
     }
 }
 

@@ -32,7 +32,7 @@ pub use engine::{
     NoHost, Output, Value,
 };
 pub use grants::{
-    wasi_plan, ClockAccess, FsAccess, Grants, NetAccess, PlanError, RandomAccess, WasiPlan,
+    wasi_plan, ClockAccess, FsAccess, FsDeny, Grants, NetAccess, PlanError, RandomAccess, WasiPlan,
 };
 pub use limits::{Deadline, Limits, Provenance};
 pub use loader::{
