@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+- **0.4.1: a mounted jail meets the caller's compute grant** (ledger #4435, from the audit in
+  #4034; a patch: no public API changes). A J2 module mounted through `JailTransport` ran on the
+  mount's limits alone, so a caller granted 1 unit of fuel could spend the mount's whole budget.
+  Each `invoke` now runs on the meet of the mount's limits and the caller's
+  `urn:cap:compute:*` grants (the smaller of each), as the component tier already does. The
+  mount's limits are a ceiling: a caller granted more than the mount still stops at the mount's
+  budget. Running out is the same typed `OverBudget` refusal as before. Mount-time `Manifest` and
+  `Cards` calls have no caller and still run on the mount's limits.
+
 - **0.4.1: bound-import values round-trip** (ledger #4033, a patch: no public API changes). A
   component calling a bound import, and the component it reaches, now agree on every value the
   type map names. An empty `list<u8>` argument is sent as no bytes, not the text `[]`. An
