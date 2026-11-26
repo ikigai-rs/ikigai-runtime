@@ -8,13 +8,14 @@ use std::sync::Arc;
 use async_trait::async_trait;
 use ikigai_core::{Capability, Error, Issuer, Representation, Request, Result};
 use ikigai_module::{ModuleCall, ModuleCard, ModuleManifest, ModuleReply, ModuleTransport};
-use ikigai_runtime::{Call, CoreEngine, Limits, NoHost, Output};
+use ikigai_runtime::{Call, CoreEngine, Grants, Limits, NoHost, Output};
 
 use crate::bridge::{bridge, serve};
 use crate::core_tier::{Compiled, WasmtimeCoreEngine};
 
 /// A [`ModuleTransport`] over a jailed ABI v1 core module: each `invoke` is one session in a
-/// fresh `Store`, under `limits`, with every `host_call` answered through the host's
+/// fresh `Store`, under `limits` met with the caller's `urn:cap:compute:*` grants (R-D10: the
+/// mount's limits are a ceiling the caller narrows, never one it lifts), with every `host_call` answered through the host's
 /// [`Issuer`] (for a `ModuleSpace` mount, the invocation's own `inv.issue`, so each guest read is
 /// a dependency of the answer).
 ///
@@ -71,13 +72,18 @@ impl ModuleTransport for JailTransport {
             request,
             capability: capability.clone(),
         })?;
+        // The caller's compute grants narrow the mount's limits, field by field; a caller with
+        // no compute grant (or root) has no opinion, so the mount's limits stand.
+        let limits = self
+            .limits
+            .meet(&Limits::from_grants(&Grants::from_capability(capability)));
         let (resolver, requests) = bridge();
         let run = self.engine.invoke(
             &self.module,
             Call::Session {
                 encoded_call: &encoded,
             },
-            &self.limits,
+            &limits,
             resolver,
         );
         // The guest and the host loop run side by side; the guest's store (and with it the
