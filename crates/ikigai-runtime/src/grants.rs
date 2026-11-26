@@ -96,12 +96,44 @@ pub struct NetAccess {
     /// The implicit unspecified bind (`0.0.0.0:0`), which every outbound connect needs
     /// (measured, R1 B1). Only set when at least one IP rule is present.
     pub implicit_unspecified_bind: bool,
+    /// The access list a socket use is answered under: every IP-literal `urn:cap:net:` grant
+    /// and every `urn:cap:net:` exclusion, as the caller holds them. The engine asks
+    /// `ikigai_http::net_allows_port` of these, so an exclusion (`urn:cap:net:-10.0.0.5:22`)
+    /// binds a socket exactly as it binds an HTTP request: the more specific rule decides, an
+    /// exclusion wins a tie, and a malformed exclusion refuses every address. Host and glob
+    /// grants are left out, since a socket sees an IP and they are served through `wasi:http`.
+    pub socket_scopes: Vec<String>,
+}
+
+/// One `fs` exclusion the run holds (`urn:cap:fs:read:-/ws/secret`), carried so the engine can
+/// place it against the jail as ikigai-fs does (both spellings of the root, links resolved, the
+/// volume's case rules) and refuse a preopen that would serve it.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct FsDeny {
+    /// The exclusion as the caller holds it.
+    pub scope: String,
+    /// `read`, `write` or `delete`.
+    pub verb: String,
+    /// The HOST path after the `-`, checked by [`check_fs_path`].
+    pub host_path: String,
+}
+
+impl FsDeny {
+    /// Whether a preopen with `access` would serve this exclusion's verb: a read-only preopen
+    /// serves reads, a read-write one every fs verb.
+    pub fn bound_by(&self, access: FsAccess) -> bool {
+        self.verb == "read" || access == FsAccess::ReadWrite
+    }
 }
 
 /// The WASI context a run is allowed, derived purely from its grants.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct WasiPlan {
     pub fs: Vec<FsPreopen>,
+    /// The `fs` exclusions the run holds whose path is a plain absolute host path. The plan
+    /// refuses one spelled at or under a preopen; the engine places the rest against its jail
+    /// (where another spelling may still name a directory a preopen serves) and refuses those.
+    pub fs_denies: Vec<FsDeny>,
     /// Environment variable NAMES to set; the VALUES come from the host's config home, never
     /// `inherit_env`.
     pub env_names: Vec<String>,
@@ -122,6 +154,7 @@ impl WasiPlan {
     fn denied() -> WasiPlan {
         WasiPlan {
             fs: Vec::new(),
+            fs_denies: Vec::new(),
             env_names: Vec::new(),
             net: NetAccess::default(),
             clock: ClockAccess::Fixed,
@@ -136,11 +169,13 @@ impl WasiPlan {
     fn everything() -> WasiPlan {
         WasiPlan {
             fs: Vec::new(),
+            fs_denies: Vec::new(),
             env_names: Vec::new(),
             net: NetAccess {
                 ip_rules: Vec::new(),
                 http_hosts: Vec::new(),
                 implicit_unspecified_bind: true,
+                socket_scopes: Vec::new(),
             },
             clock: ClockAccess::Wall,
             random: RandomAccess::Secure,
@@ -309,6 +344,8 @@ pub fn wasi_plan(grants: &Grants) -> Result<WasiPlan, PlanError> {
     // fs exclusions as (the scope, its verb, its path after the `-`), checked against the
     // preopens once those are known.
     let mut fs_denies: Vec<(&String, &str, &str)> = Vec::new();
+    // net exclusions with a path (`urn:cap:net:-10.0.0.5/admin`), which a socket cannot honor.
+    let mut net_path_denies: Vec<&String> = Vec::new();
 
     for scope in scopes {
         let Some(rest) = scope.strip_prefix("urn:cap:") else {
@@ -324,6 +361,11 @@ pub fn wasi_plan(grants: &Grants) -> Result<WasiPlan, PlanError> {
             {
                 if matches!(verb, "read" | "write" | "delete") {
                     fs_denies.push((scope, verb, path));
+                }
+            } else if let Some(rule) = rest.strip_prefix("net:-") {
+                plan.net.socket_scopes.push(scope.clone());
+                if rule.contains('/') {
+                    net_path_denies.push(scope);
                 }
             }
             continue;
@@ -349,6 +391,7 @@ pub fn wasi_plan(grants: &Grants) -> Result<WasiPlan, PlanError> {
             "net" => {
                 if is_ip_literal_rule(rule) {
                     plan.net.ip_rules.push(rule.to_string());
+                    plan.net.socket_scopes.push(scope.clone());
                 } else {
                     plan.net.http_hosts.push(rule.to_string());
                 }
@@ -378,6 +421,15 @@ pub fn wasi_plan(grants: &Grants) -> Result<WasiPlan, PlanError> {
 
     // An exclusion a preopen would serve anyway: refuse, never widen. A read-only preopen
     // serves reads; a read-write one serves every fs verb.
+    for &(deny, verb, path) in &fs_denies {
+        if check_fs_path(path).is_ok() {
+            plan.fs_denies.push(FsDeny {
+                scope: deny.clone(),
+                verb: verb.to_string(),
+                host_path: path.to_string(),
+            });
+        }
+    }
     for (deny, verb, path) in fs_denies {
         let covers = |p: &FsPreopen| verb == "read" || p.access == FsAccess::ReadWrite;
         let mut covering = plan.fs.iter().filter(|p| covers(p)).peekable();
@@ -415,8 +467,45 @@ pub fn wasi_plan(grants: &Grants) -> Result<WasiPlan, PlanError> {
         }
     }
 
+    // A socket carries no request path, so an exclusion of a path on an address the run may
+    // open a socket to cannot be honored there: refuse, never widen. One naming a host name is
+    // left to `wasi:http`, since a socket check sees only an IP.
+    if !plan.net.ip_rules.is_empty() {
+        if let Some(deny) = net_path_denies
+            .into_iter()
+            .find(|deny| !names_a_host_name(&deny["urn:cap:net:-".len()..]))
+        {
+            return Err(PlanError {
+                scope: deny.clone(),
+                reason: format!(
+                    "it excludes a path, and the socket this run may open to {} carries no \
+                     path, so it cannot be honored there; the plan is refused rather than \
+                     widened",
+                    plan.net.ip_rules.join(", ")
+                ),
+            });
+        }
+    }
+
     plan.net.implicit_unspecified_bind = !plan.net.ip_rules.is_empty();
     Ok(plan)
+}
+
+/// Whether a `net` rule's host part (before any `/` path and `:` port) is a plain DNS name, which
+/// no socket address matches: letters, digits, `-` and `.`, with at least one letter that is not
+/// part of an IP literal. Anything else (an IP literal, a glob, a bracketed IPv6 literal, a
+/// malformed host) may match an address.
+fn names_a_host_name(rule: &str) -> bool {
+    let host = rule.split('/').next().unwrap_or("");
+    let host = host.rsplit_once(':').map_or(host, |(h, _)| h);
+    !host.is_empty()
+        && host
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'.')
+        && host
+            .rsplit('.')
+            .next()
+            .is_some_and(|tld| tld.bytes().any(|b| b.is_ascii_alphabetic()))
 }
 
 /// Whether a `net` rule names an IP literal (served at the socket) rather than a host or glob
@@ -603,7 +692,24 @@ mod tests {
             "urn:cap:fs:write:-/ws/secret",
             "urn:cap:fs:delete:-/ws/secret",
         ] {
-            assert_eq!(plan_of(&["urn:cap:fs:read:/ws", deny]), expected, "{deny}");
+            let plan = plan_of(&["urn:cap:fs:read:/ws", deny]);
+            // The exclusion is carried for the engine, which places it against its jail.
+            assert_eq!(
+                plan.fs_denies
+                    .iter()
+                    .map(|d| d.scope.as_str())
+                    .collect::<Vec<_>>(),
+                [deny],
+                "{deny}"
+            );
+            assert_eq!(
+                WasiPlan {
+                    fs_denies: Vec::new(),
+                    ..plan
+                },
+                expected,
+                "{deny}"
+            );
         }
         // With no preopen at all, even an unplaceable exclusion is nothing to the plan.
         assert!(plan_of(&["urn:cap:fs:read:-secret"]).fs.is_empty());

@@ -16,7 +16,7 @@ categories = ["wasm"]
 include = ["src/**/*.rs", "build.rs", "wit/**/*.wit", "README.md", "../../LICENSE-*"]
 
 [dependencies]
-ikigai-runtime = { path = "../ikigai-runtime", version = "0.4.1" }
+ikigai-runtime = { path = "../ikigai-runtime", version = "0.5.0" }
 ikigai-core = { workspace = true }
 # The host keeps ikigai-module's typed session (R-D6 as amended): the jail is mounted through
 # its `ModuleTransport`/`ModuleSpace`, and a guest's bytes are converted to its types here.
@@ -51,6 +51,12 @@ bytes = { workspace = true }
 # Only for `AsyncWrite`, the trait wasmtime-wasi's `StdoutStream` names: the J2 session's
 # bounded stdio capture implements it. No features; already in wasmtime-wasi's graph.
 tokio = { workspace = true }
+
+# The no-follow directory walk a preopen is opened through (`openat` with `O_NOFOLLOW` per
+# component from a handle on the jail root). 1.x is the line wasmtime-wasi 50 already links, so
+# this adds no second copy; `<2.0.0` (rule 5).
+[target.'cfg(unix)'.dependencies]
+rustix = { version = "1.1", features = ["fs"] }
 
 [features]
 # The guest-fixture end-to-end tests (`tests/jail.rs`, `tests/wasi_p1.rs`, `tests/component*.rs`,

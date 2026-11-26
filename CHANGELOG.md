@@ -2,6 +2,29 @@
 
 ## Unreleased
 
+- **0.5.0: grants place exclusions the way ikigai-fs and ikigai-http do** (a minor release: new
+  public fields). A run's preopens and sockets now honor every exclusion its grants hold, read
+  as the rest of the ecosystem reads it.
+  - Sockets: a raw socket connect or send is answered by `ikigai_http::net_allows_port` under
+    the run's IP-literal `urn:cap:net:` grants and every `urn:cap:net:` exclusion, so
+    `net:10.0.0.5` with `net:-10.0.0.5:22` reaches every port but 22, an exclusion that ties a
+    grant wins, and a malformed exclusion refuses every address. The plan carries this list as
+    `NetAccess::socket_scopes`. A plan with an IP-literal grant and an exclusion of a path that
+    could fall on an IP is refused with a sentence, since a socket carries no path.
+  - Preopens: `WasiPlan::fs_denies` (new, with the `FsDeny` type) carries the `fs` exclusions,
+    and `apply_plan` refuses a preopen one of them falls in, placed as ikigai-fs places it:
+    against the jail root as mounted and as the filesystem spells it, through links (a deny on
+    `current/secret` binds `releases/v2/secret`), by on-disk name, and without case where the
+    path does not exist yet. The placement is a copy of ikigai-fs 0.6.0's, which is private
+    there; it belongs in ikigai-fs as one public function.
+  - A preopen is always the granted directory, even when a component of it is missing, and is
+    opened one component at a time from a handle on the jail root without following a link
+    (`openat` with `O_NOFOLLOW`). On Linux wasmtime is handed that opened directory; on other
+    Unix hosts it is handed the path the walk checked.
+  - Upgrading: no persisted state. A guest that relied on an excluded path or port being
+    reachable is now refused, with a sentence naming the exclusion. `ikigai-runtime-guest` and
+    `ikigai-runtime-wit` move to 0.5.0 with the workspace and do not change.
+
 - **0.4.1: a mounted jail meets the caller's compute grant** (ledger #4435, from the audit in
   #4034; a patch: no public API changes). A J2 module mounted through `JailTransport` ran on the
   mount's limits alone, so a caller granted 1 unit of fuel could spend the mount's whole budget.

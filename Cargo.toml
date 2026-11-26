@@ -10,7 +10,7 @@ members = ["crates/*"]
 exclude = ["fixtures"]
 
 [workspace.package]
-version = "0.4.1"
+version = "0.5.0"
 edition = "2021"
 # wasmtime 50 (and wasmtime-wasi 50) declare rust-version 1.97.0; that is the true floor, so
 # the shared `msrv-from-manifest` CI job checks exactly it (R-D17).
