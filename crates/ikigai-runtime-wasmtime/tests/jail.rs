@@ -380,6 +380,37 @@ async fn a_mounted_jail_reports_its_budget_refusal_typed() {
     assert!(matches!(err, Error::OverBudget { .. }), "got {err:?}");
 }
 
+/// AUDIT ledger #4034 (D): R-D10's budget is the meet of grant, bundle, host and CALLER. The
+/// component tier meets the caller's `urn:cap:compute:*` grants; the J2 mount runs on the
+/// transport's limits alone, so a caller granted 1 unit of fuel spends the mount's 50 million.
+#[tokio::test]
+async fn audit_a_mounted_jail_meets_the_callers_compute_grant() {
+    let kernel = kernel_with_the_jail(Limits::fuel(50_000_000)).await;
+    let caller =
+        Capability::root().attenuate([READ_NAME.to_string(), "urn:cap:compute:fuel:1".into()]);
+    let outcome = kernel.issue(source("urn:jail:hello"), &caller).await;
+    assert!(
+        matches!(outcome, Err(Error::OverBudget { .. })),
+        "a caller granted 1 unit of fuel ran `hello` to completion: {outcome:?}"
+    );
+}
+
+/// The other side of the meet: the mount's limits are a ceiling, so a caller granted far MORE
+/// fuel than the mount still stops at the mount's budget.
+#[tokio::test]
+async fn a_callers_larger_compute_grant_does_not_lift_the_mounts_ceiling() {
+    let kernel = kernel_with_the_jail(Limits::fuel(300_000)).await;
+    let caller = Capability::root().attenuate([
+        READ_NAME.to_string(),
+        "urn:cap:compute:fuel:1000000000000".into(),
+    ]);
+    let err = kernel
+        .issue(source("urn:jail:spin"), &caller)
+        .await
+        .unwrap_err();
+    assert!(matches!(err, Error::OverBudget { .. }), "got {err:?}");
+}
+
 #[tokio::test]
 async fn the_guests_own_cards_describe_its_endpoints_through_the_mount() {
     let kernel = kernel_with_the_jail(Limits::fuel(50_000_000)).await;
