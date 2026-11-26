@@ -152,6 +152,8 @@ fn header_of(key: &CompiledKey) -> String {
 }
 
 fn read_entry(path: &Path, key: &CompiledKey) -> Result<Vec<u8>, Reject> {
+    // ambient: fs: reads one entry under the host-configured compiled-form cache directory, which holds only the compiled artifacts this engine produced
+    #[allow(clippy::disallowed_methods)]
     let bytes = match std::fs::read(path) {
         Ok(bytes) => bytes,
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Err(Reject::Missing),
@@ -191,6 +193,8 @@ fn write_entry(path: &Path, key: &CompiledKey, body: &[u8]) -> std::io::Result<(
     builder.recursive(true);
     #[cfg(unix)]
     std::os::unix::fs::DirBuilderExt::mode(&mut builder, 0o700);
+    // ambient: fs: creates the per-engine directory under the host-configured compiled-form cache directory, which holds only the compiled artifacts this engine produced
+    #[allow(clippy::disallowed_methods)]
     builder.create(dir)?;
     let header = header_of(key);
     let tmp = dir.join(format!(
@@ -202,6 +206,8 @@ fn write_entry(path: &Path, key: &CompiledKey, body: &[u8]) -> std::io::Result<(
         COUNTER.fetch_add(1, Ordering::Relaxed)
     ));
     let written = (|| {
+        // ambient: fs: creates a temporary entry under the host-configured compiled-form cache directory, which holds only the compiled artifacts this engine produced
+        #[allow(clippy::disallowed_methods)]
         let mut file = std::fs::File::create(&tmp)?;
         file.write_all(MAGIC)?;
         file.write_all(&(header.len() as u32).to_le_bytes())?;
@@ -210,9 +216,14 @@ fn write_entry(path: &Path, key: &CompiledKey, body: &[u8]) -> std::io::Result<(
         file.write_all(body)?;
         file.sync_all()?;
         // Renamed into place, so a reader sees a whole entry or none.
-        std::fs::rename(&tmp, path)
+        // ambient: fs: renames a temporary entry into place inside the host-configured compiled-form cache directory, which holds only the compiled artifacts this engine produced
+        #[allow(clippy::disallowed_methods)]
+        std::fs::rename(&tmp, path)?;
+        Ok(())
     })();
     if written.is_err() {
+        // ambient: fs: removes this cache's own temporary entry from the host-configured compiled-form cache directory, which holds only the compiled artifacts this engine produced
+        #[allow(clippy::disallowed_methods)]
         let _ = std::fs::remove_file(&tmp);
     }
     written

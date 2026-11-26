@@ -23,7 +23,7 @@ ikigai-core = { workspace = true }
 ikigai-module = { workspace = true }
 wasmtime = { workspace = true }
 # WASI: `p1` for the core-module tier's third convention, `p2` for the component tier. p3 is
-# behind this crate's `p3` feature (R-D17: nightly and non-blocking until 2026-11-12).
+# behind this crate's `p3` feature (R-D17), built and tested on stable by CI's `features` job.
 wasmtime-wasi = { workspace = true, features = ["p1", "p2"] }
 # `wasi:http` for components, routed to the kernel's `urn:http:*` (R-D5). `p2` only: no
 # `default-send-request`, so wasmtime's own HTTP client is not even compiled in — the one way
@@ -64,8 +64,9 @@ jail-fixtures = []
 # implies `jail-fixtures` for the Rust endpoint it is measured against. The tsrs research (#3659)
 # builds `fixtures/ts-tsrs` with cargo, so it needs no further tool.
 js-fixtures = ["jail-fixtures"]
-# WASI p3 (R-D17): built on nightly in the non-blocking job until Rust 1.100.0 ships on
-# 2026-11-12. Nothing in the tier depends on it yet; the feature keeps the build honest.
+# WASI p3 (R-D17): on stable since Rust 1.100.0 (2026-11-12), so ci.yml's shared `features` job
+# lints, tests and documents it and gates the merge. Nothing in the tier depends on it yet; the
+# feature keeps the build honest.
 p3 = ["wasmtime-wasi/p3"]
 
 [dev-dependencies]
